@@ -156,52 +156,50 @@ export async function registerDevice(userId: string, deviceName: string): Promis
   try {
     const { osName, osVersion, browserName, browserVersion } = getDeviceInfo()
     const browserFingerprint = generateBrowserFingerprint()
-    
-    const { data: existingDevices } = await supabase
-      .from('device_pairs')
-      .select('*')
-      .eq('user_id', userId)
-    
-    if (existingDevices && existingDevices.length > 0) {
-      const matchingDevice = existingDevices.find(d => {
-        const deviceFingerprint = `${d.os_name}-${d.browser_name}-${d.screen_resolution || ''}-${d.color_depth || ''}-${d.timezone || ''}-${d.language || ''}`
-        return deviceFingerprint === browserFingerprint || 
-               (d.os_name === osName && d.browser_name === browserName && d.browser_fingerprint === browserFingerprint)
-      })
-      
-      if (matchingDevice) {
-        const { city, country, ip } = await getLocationInfo()
-        
-        const { data, error } = await supabase
-          .from('device_pairs')
-          .update({
-            is_online: true,
-            last_seen: new Date().toISOString(),
-            os_version: osVersion,
-            browser_version: browserVersion,
-            location_city: city,
-            location_country: country,
-            ip_address: ip,
-            browser_fingerprint: browserFingerprint
-          })
-          .eq('id', matchingDevice.id)
-          .select()
-          .single()
-        
-        if (error) {
-          return { device: null, error: error.message }
-        }
-        
-        return { device: data, error: null }
-      }
-    }
-    
-    const deviceId = generateDeviceId()
     const { city, country, ip } = await getLocationInfo()
     const screenRes = typeof window !== 'undefined' ? `${window.screen.width}x${window.screen.height}` : ''
     const colorDepth = typeof window !== 'undefined' ? window.screen.colorDepth : 0
     const timezone = typeof window !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : ''
     const language = typeof navigator !== 'undefined' ? navigator.language : ''
+    
+    const { data: existingDevice } = await supabase
+      .from('device_pairs')
+      .select('*')
+      .eq('user_id', userId)
+      .single()
+    
+    if (existingDevice) {
+      const { data, error } = await supabase
+        .from('device_pairs')
+        .update({
+          device_name: deviceName,
+          is_online: true,
+          last_seen: new Date().toISOString(),
+          os_name: osName,
+          os_version: osVersion,
+          browser_name: browserName,
+          browser_version: browserVersion,
+          location_city: city,
+          location_country: country,
+          ip_address: ip,
+          browser_fingerprint: browserFingerprint,
+          screen_resolution: screenRes,
+          color_depth: colorDepth,
+          timezone: timezone,
+          language: language
+        })
+        .eq('id', existingDevice.id)
+        .select()
+        .single()
+      
+      if (error) {
+        return { device: null, error: error.message }
+      }
+      
+      return { device: data, error: null }
+    }
+    
+    const deviceId = generateDeviceId()
     
     const { data, error } = await supabase
       .from('device_pairs')

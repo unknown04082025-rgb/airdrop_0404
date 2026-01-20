@@ -114,7 +114,7 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
   const [files, setFiles] = useState<FileItem[]>([])
   const [currentPath, setCurrentPath] = useState('/')
   const [searchQuery, setSearchQuery] = useState('')
-  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list')
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('grid')
   const [selectedFiles, setSelectedFiles] = useState<string[]>([])
   const [accessStatus, setAccessStatus] = useState<'none' | 'pending' | 'approved' | 'rejected'>('none')
   const [showAccessRequest, setShowAccessRequest] = useState(false)
@@ -126,6 +126,7 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
   const [showNewFolder, setShowNewFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [isDragging, setIsDragging] = useState(false)
+  const [showDeviceSidebar, setShowDeviceSidebar] = useState(false)
   const [totalUploadStats, setTotalUploadStats] = useState({
     totalFiles: 0,
     completedFiles: 0,
@@ -620,9 +621,97 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
   const remoteDevices = devices.filter(d => d.id !== currentDevice?.id)
   const isUploading = uploadingFiles.some(f => f.status === 'uploading')
 
+  const handleDeviceSelectMobile = (device: DevicePair) => {
+    handleDeviceSelect(device)
+    setShowDeviceSidebar(false)
+  }
+
   return (
-    <div className="h-full flex">
-      <div className="w-72 glass-panel border-r border-[#2a2a3a] p-4 flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col md:flex-row">
+      <AnimatePresence>
+        {showDeviceSidebar && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowDeviceSidebar(false)}
+              className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+            />
+            <motion.div
+              initial={{ x: -300 }}
+              animate={{ x: 0 }}
+              exit={{ x: -300 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="md:hidden fixed left-0 top-0 bottom-0 w-72 glass-panel border-r border-[#2a2a3a] p-4 flex flex-col overflow-hidden z-50"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                  <HardDrive className="w-5 h-5 text-[#39ff14]" />
+                  Select Device
+                </h2>
+                <button onClick={() => setShowDeviceSidebar(false)} className="p-2 rounded-lg hover:bg-[#1a1a24] text-[#8888a0]">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
+                <div className="space-y-2 mb-6">
+                  {currentDevice && (
+                    <button
+                      onClick={() => handleDeviceSelectMobile(currentDevice)}
+                      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                        selectedDevice?.id === currentDevice.id
+                          ? 'bg-[#39ff14]/20 border border-[#39ff14]/50'
+                          : 'bg-[#1a1a24] hover:bg-[#1a1a24]/80'
+                      }`}
+                    >
+                      <Laptop className="w-5 h-5 text-[#39ff14]" />
+                      <div className="flex-1 text-left">
+                        <p className="text-sm font-medium text-white">{currentDevice.device_name}</p>
+                        <p className="text-xs text-[#5a5a70]">This Device</p>
+                      </div>
+                      <Circle className="w-2 h-2 text-[#39ff14] fill-[#39ff14]" />
+                    </button>
+                  )}
+
+                  {remoteDevices.length > 0 && (
+                    <>
+                      <div className="text-xs text-[#5a5a70] uppercase tracking-wider mt-4 mb-2 px-2">
+                        Remote Devices
+                      </div>
+                      {remoteDevices.map(device => (
+                        <button
+                          key={device.id}
+                          onClick={() => handleDeviceSelectMobile(device)}
+                          className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
+                            selectedDevice?.id === device.id
+                              ? 'bg-[#00f0ff]/20 border border-[#00f0ff]/50'
+                              : 'bg-[#1a1a24] hover:bg-[#1a1a24]/80'
+                          }`}
+                        >
+                          <Laptop className="w-5 h-5 text-[#00f0ff]" />
+                          <div className="flex-1 text-left">
+                            <p className="text-sm font-medium text-white">{device.device_name}</p>
+                            <p className="text-xs text-[#5a5a70]">Remote</p>
+                          </div>
+                          <Circle
+                            className={`w-2 h-2 ${
+                              device.is_online ? 'text-[#39ff14] fill-[#39ff14]' : 'text-[#5a5a70] fill-[#5a5a70]'
+                            }`}
+                          />
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      <div className="hidden md:flex w-72 glass-panel border-r border-[#2a2a3a] p-4 flex-col overflow-hidden">
         <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <HardDrive className="w-5 h-5 text-[#39ff14]" />
           Select Device
@@ -753,22 +842,30 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
         )}
       </div>
 
-      <div 
-        className="flex-1 flex flex-col relative"
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-      >
-        {!selectedDevice ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-[#1a1a24] flex items-center justify-center">
-                <Folder className="w-10 h-10 text-[#5a5a70]" />
+        <div 
+          className="flex-1 flex flex-col relative"
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        >
+          {!selectedDevice ? (
+            <div className="flex-1 flex items-center justify-center p-4">
+              <div className="text-center">
+                <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-[#1a1a24] flex items-center justify-center">
+                  <Folder className="w-10 h-10 text-[#5a5a70]" />
+                </div>
+                <h3 className="text-xl font-semibold text-white mb-2">Select a Device</h3>
+                <p className="text-[#8888a0] mb-4">Choose a device to browse files</p>
+                <Button
+                  onClick={() => setShowDeviceSidebar(true)}
+                  className="md:hidden bg-gradient-to-r from-[#39ff14] to-[#20cc10] text-[#0a0a0f]"
+                >
+                  <HardDrive className="w-4 h-4 mr-2" />
+                  Select Device
+                </Button>
+                <p className="hidden md:block text-[#5a5a70] text-sm">Choose a device from the sidebar</p>
               </div>
-              <h3 className="text-xl font-semibold text-white mb-2">Select a Device</h3>
-              <p className="text-[#8888a0]">Choose a device from the sidebar to browse files</p>
             </div>
-          </div>
         ) : accessStatus === 'none' || showAccessRequest ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md">
@@ -822,105 +919,126 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
               </Button>
             </div>
           </div>
-        ) : (
-          <>
-            <div className="h-16 border-b border-[#2a2a3a] px-6 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <button 
-                    onClick={() => setCurrentPath('/')}
-                    className="text-[#8888a0] hover:text-white transition-colors"
+          ) : (
+            <>
+              <div className="min-h-14 md:h-16 border-b border-[#2a2a3a] px-3 md:px-6 py-2 md:py-0 flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4">
+                <div className="flex items-center gap-2 md:gap-4">
+                  <button
+                    onClick={() => setShowDeviceSidebar(true)}
+                    className="md:hidden p-2 rounded-lg bg-[#1a1a24] text-[#8888a0]"
                   >
-                    <Home className="w-4 h-4" />
+                    <HardDrive className="w-4 h-4" />
                   </button>
-                  {currentPath.split('/').filter(Boolean).map((part, index, arr) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <ChevronRight className="w-4 h-4 text-[#5a5a70]" />
-                      <button
-                        onClick={() => setCurrentPath('/' + arr.slice(0, index + 1).join('/'))}
-                        className={`${
-                          index === arr.length - 1 ? 'text-white' : 'text-[#8888a0] hover:text-white'
-                        } transition-colors`}
-                      >
-                        {part}
-                      </button>
-                    </div>
-                  ))}
+                  <div className="flex items-center gap-2 text-sm overflow-x-auto">
+                    <button 
+                      onClick={() => setCurrentPath('/')}
+                      className="text-[#8888a0] hover:text-white transition-colors flex-shrink-0"
+                    >
+                      <Home className="w-4 h-4" />
+                    </button>
+                    {currentPath.split('/').filter(Boolean).map((part, index, arr) => (
+                      <div key={index} className="flex items-center gap-2 flex-shrink-0">
+                        <ChevronRight className="w-4 h-4 text-[#5a5a70]" />
+                        <button
+                          onClick={() => setCurrentPath('/' + arr.slice(0, index + 1).join('/'))}
+                          className={`${
+                            index === arr.length - 1 ? 'text-white' : 'text-[#8888a0] hover:text-white'
+                          } transition-colors truncate max-w-[100px] md:max-w-none`}
+                        >
+                          {part}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 md:gap-3 overflow-x-auto pb-1 md:pb-0">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    onChange={handleFileInputChange}
+                    className="hidden"
+                  />
+                  <Button
+                    onClick={() => fileInputRef.current?.click()}
+                    size="sm"
+                    className="bg-gradient-to-r from-[#39ff14] to-[#20cc10] text-[#0a0a0f] hover:from-[#20cc10] hover:to-[#18aa0c] flex-shrink-0"
+                  >
+                    <Upload className="w-4 h-4 md:mr-2" />
+                    <span className="hidden md:inline">Upload</span>
+                  </Button>
+                  {uploadingFiles.length > 0 && (
+                    <Button
+                      onClick={() => setShowUploadModal(true)}
+                      variant="outline"
+                      size="sm"
+                      className="border-[#00f0ff]/50 text-[#00f0ff] hover:bg-[#00f0ff]/10 relative flex-shrink-0"
+                    >
+                      <HardDriveUpload className="w-4 h-4" />
+                      <span className="ml-1 px-1.5 py-0.5 bg-[#00f0ff]/20 rounded text-xs">
+                        {totalUploadStats.completedFiles}/{totalUploadStats.totalFiles}
+                      </span>
+                    </Button>
+                  )}
+                  <Button
+                    onClick={() => setShowNewFolder(true)}
+                    variant="outline"
+                    size="sm"
+                    className="border-[#2a2a3a] text-white hover:bg-[#1a1a24] flex-shrink-0"
+                  >
+                    <FolderPlus className="w-4 h-4 md:mr-2" />
+                    <span className="hidden md:inline">New Folder</span>
+                  </Button>
+                  <Button
+                    onClick={fetchFiles}
+                    variant="outline"
+                    size="icon"
+                    className="border-[#2a2a3a] text-white hover:bg-[#1a1a24] h-8 w-8 flex-shrink-0"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  </Button>
+                  <div className="relative hidden md:block">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5a5a70]" />
+                    <Input
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search files..."
+                      className="w-48 pl-10 bg-[#1a1a24] border-[#2a2a3a] text-white placeholder:text-[#5a5a70]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1 p-1 bg-[#1a1a24] rounded-lg flex-shrink-0">
+                    <button
+                      onClick={() => setViewMode('list')}
+                      className={`p-1.5 md:p-2 rounded-md transition-colors ${
+                        viewMode === 'list' ? 'bg-[#2a2a3a] text-white' : 'text-[#5a5a70]'
+                      }`}
+                    >
+                      <List className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setViewMode('grid')}
+                      className={`p-1.5 md:p-2 rounded-md transition-colors ${
+                        viewMode === 'grid' ? 'bg-[#2a2a3a] text-white' : 'text-[#5a5a70]'
+                      }`}
+                    >
+                      <Grid className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  onChange={handleFileInputChange}
-                  className="hidden"
-                />
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="bg-gradient-to-r from-[#39ff14] to-[#20cc10] text-[#0a0a0f] hover:from-[#20cc10] hover:to-[#18aa0c]"
-                >
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload
-                </Button>
-                {uploadingFiles.length > 0 && (
-                  <Button
-                    onClick={() => setShowUploadModal(true)}
-                    variant="outline"
-                    className="border-[#00f0ff]/50 text-[#00f0ff] hover:bg-[#00f0ff]/10 relative"
-                  >
-                    <HardDriveUpload className="w-4 h-4 mr-2" />
-                    {isUploading ? 'Uploading...' : 'Uploads'}
-                    <span className="ml-2 px-1.5 py-0.5 bg-[#00f0ff]/20 rounded text-xs">
-                      {totalUploadStats.completedFiles}/{totalUploadStats.totalFiles}
-                    </span>
-                  </Button>
-                )}
-                <Button
-                  onClick={() => setShowNewFolder(true)}
-                  variant="outline"
-                  className="border-[#2a2a3a] text-white hover:bg-[#1a1a24]"
-                >
-                  <FolderPlus className="w-4 h-4 mr-2" /> New Folder
-                </Button>
-                <Button
-                  onClick={fetchFiles}
-                  variant="outline"
-                  size="icon"
-                  className="border-[#2a2a3a] text-white hover:bg-[#1a1a24]"
-                >
-                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                </Button>
+              <div className="md:hidden px-3 py-2 border-b border-[#2a2a3a]">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5a5a70]" />
                   <Input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search files..."
-                    className="w-48 pl-10 bg-[#1a1a24] border-[#2a2a3a] text-white placeholder:text-[#5a5a70]"
+                    className="w-full pl-10 bg-[#1a1a24] border-[#2a2a3a] text-white placeholder:text-[#5a5a70] h-9"
                   />
                 </div>
-                <div className="flex items-center gap-1 p-1 bg-[#1a1a24] rounded-lg">
-                  <button
-                    onClick={() => setViewMode('list')}
-                    className={`p-2 rounded-md transition-colors ${
-                      viewMode === 'list' ? 'bg-[#2a2a3a] text-white' : 'text-[#5a5a70]'
-                    }`}
-                  >
-                    <List className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setViewMode('grid')}
-                    className={`p-2 rounded-md transition-colors ${
-                      viewMode === 'grid' ? 'bg-[#2a2a3a] text-white' : 'text-[#5a5a70]'
-                    }`}
-                  >
-                    <Grid className="w-4 h-4" />
-                  </button>
-                </div>
               </div>
-            </div>
 
             <AnimatePresence>
               {isDragging && (
@@ -940,23 +1058,23 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
               )}
             </AnimatePresence>
 
-            <div className="flex-1 overflow-auto custom-scrollbar p-6 relative">
-              {loading ? (
-                <div className="flex items-center justify-center h-full">
-                  <RefreshCw className="w-8 h-8 text-[#00f0ff] animate-spin" />
-                </div>
-              ) : filteredFiles.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full">
-                  <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-[#1a1a24] flex items-center justify-center">
-                    <Folder className="w-10 h-10 text-[#5a5a70]" />
+              <div className="flex-1 overflow-auto custom-scrollbar p-3 md:p-6 relative">
+                {loading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <RefreshCw className="w-8 h-8 text-[#00f0ff] animate-spin" />
                   </div>
-                  <h3 className="text-xl font-semibold text-white mb-2">No files yet</h3>
-                  <p className="text-[#8888a0] mb-6">Upload files or create a folder to get started</p>
-                  <div className="flex gap-3">
-                    <Button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="bg-gradient-to-r from-[#39ff14] to-[#20cc10] text-[#0a0a0f]"
-                    >
+                ) : filteredFiles.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full">
+                    <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-[#1a1a24] flex items-center justify-center">
+                      <Folder className="w-10 h-10 text-[#5a5a70]" />
+                    </div>
+                    <h3 className="text-xl font-semibold text-white mb-2">No files yet</h3>
+                    <p className="text-[#8888a0] mb-6 text-center px-4">Upload files or create a folder to get started</p>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <Button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="bg-gradient-to-r from-[#39ff14] to-[#20cc10] text-[#0a0a0f]"
+                      >
                       <Upload className="w-4 h-4 mr-2" /> Upload Files
                     </Button>
                     <Button
@@ -968,102 +1086,113 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
                     </Button>
                   </div>
                 </div>
-              ) : viewMode === 'list' ? (
-                <div className="space-y-1">
-                  <div className="grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium text-[#5a5a70] uppercase tracking-wider">
-                    <div className="col-span-6">Name</div>
-                    <div className="col-span-2">Size</div>
-                    <div className="col-span-2">Modified</div>
-                    <div className="col-span-2">Actions</div>
-                  </div>
-                  {filteredFiles.map((file) => (
-                    <motion.div
-                      key={file.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={`grid grid-cols-12 gap-4 px-4 py-3 rounded-lg cursor-pointer transition-all ${
-                        selectedFiles.includes(file.id)
-                          ? 'bg-[#00f0ff]/10 border border-[#00f0ff]/30'
-                          : 'hover:bg-[#1a1a24]'
-                      }`}
-                      onClick={() => file.isDirectory ? navigateToFolder(file) : toggleFileSelection(file.id)}
-                    >
-                      <div className="col-span-6 flex items-center gap-3">
-                        {getFileIcon(file)}
-                        <span className="text-white truncate">{file.name}</span>
-                      </div>
-                      <div className="col-span-2 text-[#8888a0] text-sm flex items-center">
-                        {formatFileSize(file.size)}
-                      </div>
-                      <div className="col-span-2 text-[#8888a0] text-sm flex items-center">
-                        {file.modified}
-                      </div>
-                      <div className="col-span-2 flex items-center gap-2">
-                        {!file.isDirectory && (
-                          <>
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); downloadFile(file); }}
-                              className="p-1.5 rounded-md hover:bg-[#2a2a3a] text-[#8888a0] hover:text-white transition-colors"
-                            >
-                              <Download className="w-4 h-4" />
-                            </button>
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); setPreviewFile(file); }}
-                              className="p-1.5 rounded-md hover:bg-[#2a2a3a] text-[#8888a0] hover:text-white transition-colors"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                          </>
-                        )}
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button 
-                              onClick={(e) => e.stopPropagation()}
-                              className="p-1.5 rounded-md hover:bg-[#2a2a3a] text-[#8888a0] hover:text-white transition-colors"
-                            >
-                              <MoreVertical className="w-4 h-4" />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent className="bg-[#12121a] border-[#2a2a3a]">
-                            {!file.isDirectory && (
-                              <DropdownMenuItem 
-                                onClick={() => downloadFile(file)}
-                                className="text-white hover:bg-[#1a1a24]"
+                ) : viewMode === 'list' ? (
+                  <div className="space-y-1">
+                    <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-2 text-xs font-medium text-[#5a5a70] uppercase tracking-wider">
+                      <div className="col-span-6">Name</div>
+                      <div className="col-span-2">Size</div>
+                      <div className="col-span-2">Modified</div>
+                      <div className="col-span-2">Actions</div>
+                    </div>
+                    {filteredFiles.map((file) => (
+                      <motion.div
+                        key={file.id}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`flex md:grid md:grid-cols-12 gap-2 md:gap-4 px-3 md:px-4 py-3 rounded-lg cursor-pointer transition-all ${
+                          selectedFiles.includes(file.id)
+                            ? 'bg-[#00f0ff]/10 border border-[#00f0ff]/30'
+                            : 'hover:bg-[#1a1a24]'
+                        }`}
+                        onClick={() => file.isDirectory ? navigateToFolder(file) : toggleFileSelection(file.id)}
+                      >
+                        <div className="flex-1 md:col-span-6 flex items-center gap-3 min-w-0">
+                          {getFileIcon(file)}
+                          <div className="min-w-0">
+                            <span className="text-white truncate block">{file.name}</span>
+                            <span className="md:hidden text-xs text-[#5a5a70]">{formatFileSize(file.size)}</span>
+                          </div>
+                        </div>
+                        <div className="hidden md:flex md:col-span-2 text-[#8888a0] text-sm items-center">
+                          {formatFileSize(file.size)}
+                        </div>
+                        <div className="hidden md:flex md:col-span-2 text-[#8888a0] text-sm items-center">
+                          {file.modified}
+                        </div>
+                        <div className="flex items-center gap-1 md:gap-2 md:col-span-2">
+                          {!file.isDirectory && (
+                            <>
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); downloadFile(file); }}
+                                className="p-1.5 rounded-md hover:bg-[#2a2a3a] text-[#8888a0] hover:text-white transition-colors"
                               >
-                                <Download className="w-4 h-4 mr-2" /> Download
+                                <Download className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); setPreviewFile(file); }}
+                                className="hidden md:block p-1.5 rounded-md hover:bg-[#2a2a3a] text-[#8888a0] hover:text-white transition-colors"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button 
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-1.5 rounded-md hover:bg-[#2a2a3a] text-[#8888a0] hover:text-white transition-colors"
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent className="bg-[#12121a] border-[#2a2a3a]">
+                              {!file.isDirectory && (
+                                <>
+                                  <DropdownMenuItem 
+                                    onClick={() => downloadFile(file)}
+                                    className="text-white hover:bg-[#1a1a24]"
+                                  >
+                                    <Download className="w-4 h-4 mr-2" /> Download
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem 
+                                    onClick={() => setPreviewFile(file)}
+                                    className="text-white hover:bg-[#1a1a24] md:hidden"
+                                  >
+                                    <Eye className="w-4 h-4 mr-2" /> Preview
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                              <DropdownMenuItem 
+                                onClick={() => deleteFile(file)}
+                                className="text-[#ff073a] hover:bg-[#1a1a24]"
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" /> Delete
                               </DropdownMenuItem>
-                            )}
-                            <DropdownMenuItem 
-                              onClick={() => deleteFile(file)}
-                              className="text-[#ff073a] hover:bg-[#1a1a24]"
-                            >
-                              <Trash2 className="w-4 h-4 mr-2" /> Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4">
                   {filteredFiles.map((file) => (
                     <motion.div
                       key={file.id}
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      className={`p-4 rounded-xl cursor-pointer transition-all ${
+                      className={`p-3 md:p-4 rounded-xl cursor-pointer transition-all ${
                         selectedFiles.includes(file.id)
                           ? 'bg-[#00f0ff]/10 border border-[#00f0ff]/30'
                           : 'bg-[#1a1a24] hover:bg-[#1a1a24]/80'
                       }`}
                       onClick={() => file.isDirectory ? navigateToFolder(file) : toggleFileSelection(file.id)}
                     >
-                      <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-[#2a2a3a] flex items-center justify-center">
+                      <div className="w-10 h-10 md:w-12 md:h-12 mx-auto mb-2 md:mb-3 rounded-xl bg-[#2a2a3a] flex items-center justify-center">
                         {getFileIcon(file)}
                       </div>
-                      <p className="text-sm text-white text-center truncate">{file.name}</p>
-                      <p className="text-xs text-[#5a5a70] text-center mt-1">
+                      <p className="text-xs md:text-sm text-white text-center truncate">{file.name}</p>
+                      <p className="text-[10px] md:text-xs text-[#5a5a70] text-center mt-1">
                         {file.isDirectory ? 'Folder' : formatFileSize(file.size)}
                       </p>
                     </motion.div>
@@ -1073,8 +1202,8 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
             </div>
 
             {selectedFiles.length > 0 && (
-              <div className="h-16 border-t border-[#2a2a3a] px-6 flex items-center justify-between bg-[#0f0f16]">
-                <span className="text-sm text-[#8888a0]">
+              <div className="h-14 md:h-16 border-t border-[#2a2a3a] px-3 md:px-6 flex items-center justify-between bg-[#0f0f16]">
+                <span className="text-xs md:text-sm text-[#8888a0]">
                   {selectedFiles.length} file(s) selected
                 </span>
                 <div className="flex items-center gap-2">
@@ -1083,10 +1212,12 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
                       const selectedFile = files.find(f => f.id === selectedFiles[0])
                       if (selectedFile) downloadFile(selectedFile)
                     }}
-                    variant="outline" 
+                    variant="outline"
+                    size="sm"
                     className="border-[#2a2a3a] text-white hover:bg-[#1a1a24]"
                   >
-                    <Download className="w-4 h-4 mr-2" /> Download
+                    <Download className="w-4 h-4 md:mr-2" />
+                    <span className="hidden md:inline">Download</span>
                   </Button>
                   <Button 
                     onClick={() => {
@@ -1095,10 +1226,12 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
                         if (file) deleteFile(file)
                       })
                     }}
-                    variant="outline" 
+                    variant="outline"
+                    size="sm"
                     className="border-[#ff073a]/50 text-[#ff073a] hover:bg-[#ff073a]/10"
                   >
-                    <Trash2 className="w-4 h-4 mr-2" /> Delete
+                    <Trash2 className="w-4 h-4 md:mr-2" />
+                    <span className="hidden md:inline">Delete</span>
                   </Button>
                 </div>
               </div>
@@ -1108,41 +1241,41 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
       </div>
 
       <Dialog open={showUploadModal} onOpenChange={setShowUploadModal}>
-        <DialogContent className="bg-[#12121a] border-[#2a2a3a] max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogContent className="bg-[#12121a] border-[#2a2a3a] max-w-[95vw] md:max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
-            <DialogTitle className="text-white flex items-center gap-2">
+            <DialogTitle className="text-white flex items-center gap-2 text-base md:text-lg">
               <HardDriveUpload className="w-5 h-5 text-[#39ff14]" />
               Upload Progress
             </DialogTitle>
           </DialogHeader>
           
-          <div className="glass-panel rounded-xl p-4 mb-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-              <div className="bg-[#1a1a24] rounded-lg p-3">
-                <p className="text-2xl font-bold text-white">{totalUploadStats.completedFiles}/{totalUploadStats.totalFiles}</p>
-                <p className="text-xs text-[#8888a0]">Files Completed</p>
+          <div className="glass-panel rounded-xl p-3 md:p-4 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 text-center">
+              <div className="bg-[#1a1a24] rounded-lg p-2 md:p-3">
+                <p className="text-lg md:text-2xl font-bold text-white">{totalUploadStats.completedFiles}/{totalUploadStats.totalFiles}</p>
+                <p className="text-[10px] md:text-xs text-[#8888a0]">Files</p>
               </div>
-              <div className="bg-[#1a1a24] rounded-lg p-3">
-                <p className="text-2xl font-bold text-[#39ff14]">{formatFileSize(totalUploadStats.uploadedSize)}</p>
-                <p className="text-xs text-[#8888a0]">of {formatFileSize(totalUploadStats.totalSize)}</p>
+              <div className="bg-[#1a1a24] rounded-lg p-2 md:p-3">
+                <p className="text-lg md:text-2xl font-bold text-[#39ff14]">{formatFileSize(totalUploadStats.uploadedSize)}</p>
+                <p className="text-[10px] md:text-xs text-[#8888a0]">of {formatFileSize(totalUploadStats.totalSize)}</p>
               </div>
-              <div className="bg-[#1a1a24] rounded-lg p-3">
-                <p className="text-2xl font-bold text-[#00f0ff]">{formatSpeed(totalUploadStats.overallSpeed)}</p>
-                <p className="text-xs text-[#8888a0]">Speed</p>
+              <div className="bg-[#1a1a24] rounded-lg p-2 md:p-3">
+                <p className="text-lg md:text-2xl font-bold text-[#00f0ff]">{formatSpeed(totalUploadStats.overallSpeed)}</p>
+                <p className="text-[10px] md:text-xs text-[#8888a0]">Speed</p>
               </div>
-              <div className="bg-[#1a1a24] rounded-lg p-3">
-                <p className="text-2xl font-bold text-[#ff6b35]">{formatTime(totalUploadStats.overallTimeRemaining)}</p>
-                <p className="text-xs text-[#8888a0]">Remaining</p>
+              <div className="bg-[#1a1a24] rounded-lg p-2 md:p-3">
+                <p className="text-lg md:text-2xl font-bold text-[#ff6b35]">{formatTime(totalUploadStats.overallTimeRemaining)}</p>
+                <p className="text-[10px] md:text-xs text-[#8888a0]">Remaining</p>
               </div>
             </div>
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-xs text-[#8888a0] mb-1">
+            <div className="mt-3 md:mt-4">
+              <div className="flex items-center justify-between text-[10px] md:text-xs text-[#8888a0] mb-1">
                 <span>Overall Progress</span>
                 <span>{Math.round(totalUploadStats.overallProgress)}%</span>
               </div>
               <Progress 
                 value={totalUploadStats.overallProgress} 
-                className="h-3 bg-[#1a1a24]"
+                className="h-2 md:h-3 bg-[#1a1a24]"
               />
             </div>
             {totalUploadStats.failedFiles > 0 && (

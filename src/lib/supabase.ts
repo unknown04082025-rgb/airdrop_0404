@@ -64,3 +64,24 @@ export type ScreenSession = {
   started_at: string
   ended_at: string | null
 }
+
+export type GameSession = {
+  id: string
+  game_type: 'tictactoe' | 'rps'
+  player1_device_id: string
+  player2_device_id: string | null
+  status: 'waiting' | 'playing' | 'finished'
+  winner_device_id: string | null
+  current_turn: string | null
+  game_state: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type GameMove = {
+  id: string
+  game_session_id: string
+  player_device_id: string
+  move_data: Record<string, unknown>
+  created_at: string
+}

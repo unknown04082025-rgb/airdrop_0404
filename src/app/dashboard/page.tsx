@@ -8,7 +8,7 @@ import {
   ChevronRight, Circle, Laptop, Smartphone,
   HardDrive, Users, Activity, Lock, Menu, X,
   MapPin, Globe, Check, Clock, MessageSquare,
-  Send, Clipboard, Camera, Video, Mic, QrCode
+  Send, Clipboard, Camera, Video, Mic, QrCode, Gamepad2
 } from 'lucide-react'
 import { useAuth, AuthProvider } from '@/lib/auth-context'
 import { supabase, DevicePair, AccessRequest } from '@/lib/supabase'
@@ -16,8 +16,9 @@ import { Button } from '@/components/ui/button'
 import { FileAccess } from '@/components/file-access'
 import { ClipboardSync } from '@/components/clipboard-sync'
 import { RemoteCamera } from '@/components/remote-camera'
+import { Games } from '@/components/games'
 
-type Section = 'overview' | 'files' | 'clipboard' | 'camera'
+type Section = 'overview' | 'files' | 'clipboard' | 'camera' | 'games'
 
 const getOsIcon = (osName?: string) => {
   if (!osName) return '💻'
@@ -374,18 +375,30 @@ function DashboardContent() {
                   <span className="font-medium">Clipboard Sync</span>
                 </button>
 
-                <button
-                  onClick={() => handleSectionChange('camera')}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-                    activeSection === 'camera'
-                      ? 'bg-gradient-to-r from-[#b829dd]/20 to-transparent border-l-2 border-[#b829dd] text-white'
-                      : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
-                  }`}
-                >
-                  <Camera className="w-5 h-5" />
-                  <span className="font-medium">Remote Camera</span>
-                </button>
-              </div>
+<button
+                    onClick={() => handleSectionChange('camera')}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                      activeSection === 'camera'
+                        ? 'bg-gradient-to-r from-[#b829dd]/20 to-transparent border-l-2 border-[#b829dd] text-white'
+                        : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
+                    }`}
+                  >
+                    <Camera className="w-5 h-5" />
+                    <span className="font-medium">Remote Camera</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleSectionChange('games')}
+                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                      activeSection === 'games'
+                        ? 'bg-gradient-to-r from-[#ffd700]/20 to-transparent border-l-2 border-[#ffd700] text-white'
+                        : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
+                    }`}
+                  >
+                    <Gamepad2 className="w-5 h-5" />
+                    <span className="font-medium">Games</span>
+                  </button>
+                </div>
 
               <div className="mt-8 pt-8 border-t border-[#2a2a3a]">
                 <h3 className="text-xs font-semibold text-[#5a5a70] uppercase tracking-wider mb-4 px-4">
@@ -513,18 +526,30 @@ function DashboardContent() {
             <span className="font-medium">Clipboard Sync</span>
           </button>
 
-          <button
-            onClick={() => setActiveSection('camera')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-              activeSection === 'camera'
-                ? 'bg-gradient-to-r from-[#b829dd]/20 to-transparent border-l-2 border-[#b829dd] text-white'
-                : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
-            }`}
-          >
-            <Camera className="w-5 h-5" />
-            <span className="font-medium">Remote Camera</span>
-          </button>
-        </div>
+<button
+              onClick={() => setActiveSection('camera')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                activeSection === 'camera'
+                  ? 'bg-gradient-to-r from-[#b829dd]/20 to-transparent border-l-2 border-[#b829dd] text-white'
+                  : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
+              }`}
+            >
+              <Camera className="w-5 h-5" />
+              <span className="font-medium">Remote Camera</span>
+            </button>
+
+            <button
+              onClick={() => setActiveSection('games')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                activeSection === 'games'
+                  ? 'bg-gradient-to-r from-[#ffd700]/20 to-transparent border-l-2 border-[#ffd700] text-white'
+                  : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
+              }`}
+            >
+              <Gamepad2 className="w-5 h-5" />
+              <span className="font-medium">Games</span>
+            </button>
+          </div>
 
         <div className="mt-8 pt-8 border-t border-[#2a2a3a]">
           <h3 className="text-xs font-semibold text-[#5a5a70] uppercase tracking-wider mb-4 px-4">
@@ -680,73 +705,95 @@ function DashboardContent() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-                <div
-                  onClick={() => setActiveSection('files')}
-                  className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#39ff14]/50 transition-all duration-300 group"
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3 md:gap-4">
-                      <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#39ff14] to-[#20cc10] flex items-center justify-center">
-                        <Folder className="w-6 h-6 md:w-7 md:h-7 text-[#0a0a0f]" />
+<div className="grid grid-cols-1 lg:grid-cols-4 gap-4 md:gap-6">
+                  <div
+                    onClick={() => setActiveSection('files')}
+                    className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#39ff14]/50 transition-all duration-300 group"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3 md:gap-4">
+                        <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#39ff14] to-[#20cc10] flex items-center justify-center">
+                          <Folder className="w-6 h-6 md:w-7 md:h-7 text-[#0a0a0f]" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg md:text-xl font-semibold text-white">File Access</h3>
+                          <p className="text-xs md:text-sm text-[#8888a0]">Browse remote files</p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-lg md:text-xl font-semibold text-white">File Access</h3>
-                        <p className="text-xs md:text-sm text-[#8888a0]">Browse remote files</p>
-                      </div>
+                      <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#39ff14] group-hover:translate-x-1 transition-all" />
                     </div>
-                    <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#39ff14] group-hover:translate-x-1 transition-all" />
+                    <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
+                      <Lock className="w-3 h-3 md:w-4 md:h-4" />
+                      <span>Encrypted file transfer</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
-                    <Lock className="w-3 h-3 md:w-4 md:h-4" />
-                    <span>Encrypted file transfer</span>
-                  </div>
-                </div>
 
-                <div
-                  onClick={() => setActiveSection('clipboard')}
-                  className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#ff6b35]/50 transition-all duration-300 group"
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3 md:gap-4">
-                      <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#ff6b35] to-[#ff4500] flex items-center justify-center">
-                        <Clipboard className="w-6 h-6 md:w-7 md:h-7 text-white" />
+                  <div
+                    onClick={() => setActiveSection('clipboard')}
+                    className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#ff6b35]/50 transition-all duration-300 group"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3 md:gap-4">
+                        <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#ff6b35] to-[#ff4500] flex items-center justify-center">
+                          <Clipboard className="w-6 h-6 md:w-7 md:h-7 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg md:text-xl font-semibold text-white">Clipboard Sync</h3>
+                          <p className="text-xs md:text-sm text-[#8888a0]">Share text & links</p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-lg md:text-xl font-semibold text-white">Clipboard Sync</h3>
-                        <p className="text-xs md:text-sm text-[#8888a0]">Share text & links</p>
-                      </div>
+                      <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#ff6b35] group-hover:translate-x-1 transition-all" />
                     </div>
-                    <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#ff6b35] group-hover:translate-x-1 transition-all" />
+                    <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
+                      <Send className="w-3 h-3 md:w-4 md:h-4" />
+                      <span>Instant sync between devices</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
-                    <Send className="w-3 h-3 md:w-4 md:h-4" />
-                    <span>Instant sync between devices</span>
-                  </div>
-                </div>
 
-                <div
-                  onClick={() => setActiveSection('camera')}
-                  className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#b829dd]/50 transition-all duration-300 group"
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3 md:gap-4">
-                      <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#b829dd] to-[#9920bb] flex items-center justify-center">
-                        <Camera className="w-6 h-6 md:w-7 md:h-7 text-white" />
+                  <div
+                    onClick={() => setActiveSection('camera')}
+                    className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#b829dd]/50 transition-all duration-300 group"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3 md:gap-4">
+                        <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#b829dd] to-[#9920bb] flex items-center justify-center">
+                          <Camera className="w-6 h-6 md:w-7 md:h-7 text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg md:text-xl font-semibold text-white">Remote Camera</h3>
+                          <p className="text-xs md:text-sm text-[#8888a0]">View device camera</p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-lg md:text-xl font-semibold text-white">Remote Camera</h3>
-                        <p className="text-xs md:text-sm text-[#8888a0]">View device camera</p>
-                      </div>
+                      <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#b829dd] group-hover:translate-x-1 transition-all" />
                     </div>
-                    <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#b829dd] group-hover:translate-x-1 transition-all" />
+                    <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
+                      <Video className="w-3 h-3 md:w-4 md:h-4" />
+                      <span>Live camera streaming</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
-                    <Video className="w-3 h-3 md:w-4 md:h-4" />
-                    <span>Live camera streaming</span>
+
+                  <div
+                    onClick={() => setActiveSection('games')}
+                    className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#ffd700]/50 transition-all duration-300 group"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3 md:gap-4">
+                        <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#ffd700] to-[#ff8c00] flex items-center justify-center">
+                          <Gamepad2 className="w-6 h-6 md:w-7 md:h-7 text-[#0a0a0f]" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg md:text-xl font-semibold text-white">Games</h3>
+                          <p className="text-xs md:text-sm text-[#8888a0]">Play with devices</p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#ffd700] group-hover:translate-x-1 transition-all" />
+                    </div>
+                    <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
+                      <Gamepad2 className="w-3 h-3 md:w-4 md:h-4" />
+                      <span>Real-time multiplayer</span>
+                    </div>
                   </div>
                 </div>
-              </div>
             </motion.div>
           )}
 
@@ -774,18 +821,30 @@ function DashboardContent() {
             </motion.div>
           )}
 
-          {activeSection === 'camera' && (
-            <motion.div
-              key="camera"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="h-[calc(100vh-4rem)]"
-            >
-              <RemoteCamera devices={devices} currentDevice={device} />
-            </motion.div>
-          )}
-        </AnimatePresence>
+{activeSection === 'camera' && (
+              <motion.div
+                key="camera"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="h-[calc(100vh-4rem)]"
+              >
+                <RemoteCamera devices={devices} currentDevice={device} />
+              </motion.div>
+            )}
+
+            {activeSection === 'games' && (
+              <motion.div
+                key="games"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="h-[calc(100vh-4rem)]"
+              >
+                <Games devices={devices} currentDevice={device} />
+              </motion.div>
+            )}
+          </AnimatePresence>
       </main>
     </div>
   )

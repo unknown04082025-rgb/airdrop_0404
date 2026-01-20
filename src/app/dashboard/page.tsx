@@ -4,18 +4,20 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
-  Shield, Folder, Monitor, LogOut, Bell, 
+  Shield, Folder, LogOut, Bell, 
   ChevronRight, Circle, Laptop, Smartphone,
   HardDrive, Users, Activity, Lock, Menu, X,
-  MapPin, Globe, Info, Check, Clock
+  MapPin, Globe, Check, Clock, MessageSquare,
+  Send, Clipboard, Camera, Video, Mic, QrCode
 } from 'lucide-react'
 import { useAuth, AuthProvider } from '@/lib/auth-context'
 import { supabase, DevicePair, AccessRequest } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { FileAccess } from '@/components/file-access'
-import { ScreenShare } from '@/components/screen-share'
+import { ClipboardSync } from '@/components/clipboard-sync'
+import { RemoteCamera } from '@/components/remote-camera'
 
-type Section = 'overview' | 'files' | 'screen'
+type Section = 'overview' | 'files' | 'clipboard' | 'camera'
 
 const getOsIcon = (osName?: string) => {
   if (!osName) return '💻'
@@ -237,15 +239,14 @@ function DashboardContent() {
                             <div key={request.id} className="p-4 hover:bg-[#1a1a24]/50 transition-colors">
                               <div className="flex items-start gap-3">
                                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#ff6b35] to-[#ff073a] flex items-center justify-center flex-shrink-0">
-                                  {request.request_type === 'file_access' ? (
-                                    <Folder className="w-5 h-5 text-white" />
-                                  ) : (
-                                    <Monitor className="w-5 h-5 text-white" />
-                                  )}
+                                  <Folder className="w-5 h-5 text-white" />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm text-white font-medium">
-                                    {request.request_type === 'file_access' ? 'File Access Request' : 'Screen Share Request'}
+                                    {request.request_type === 'file_access' ? 'File Access Request' : 
+                                     request.request_type === 'clipboard_sync' ? 'Clipboard Sync Request' :
+                                     request.request_type === 'camera_access' ? 'Camera Access Request' :
+                                     'Access Request'}
                                   </p>
                                   <p className="text-xs text-[#8888a0] mt-0.5">
                                     From: {request.requester_device?.device_name || 'Unknown Device'}
@@ -362,15 +363,27 @@ function DashboardContent() {
                 </button>
 
                 <button
-                  onClick={() => handleSectionChange('screen')}
+                  onClick={() => handleSectionChange('clipboard')}
                   className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-                    activeSection === 'screen'
+                    activeSection === 'clipboard'
+                      ? 'bg-gradient-to-r from-[#ff6b35]/20 to-transparent border-l-2 border-[#ff6b35] text-white'
+                      : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
+                  }`}
+                >
+                  <Clipboard className="w-5 h-5" />
+                  <span className="font-medium">Clipboard Sync</span>
+                </button>
+
+                <button
+                  onClick={() => handleSectionChange('camera')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                    activeSection === 'camera'
                       ? 'bg-gradient-to-r from-[#b829dd]/20 to-transparent border-l-2 border-[#b829dd] text-white'
                       : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
                   }`}
                 >
-                  <Monitor className="w-5 h-5" />
-                  <span className="font-medium">Screen Share</span>
+                  <Camera className="w-5 h-5" />
+                  <span className="font-medium">Remote Camera</span>
                 </button>
               </div>
 
@@ -489,15 +502,27 @@ function DashboardContent() {
           </button>
 
           <button
-            onClick={() => setActiveSection('screen')}
+            onClick={() => setActiveSection('clipboard')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
-              activeSection === 'screen'
+              activeSection === 'clipboard'
+                ? 'bg-gradient-to-r from-[#ff6b35]/20 to-transparent border-l-2 border-[#ff6b35] text-white'
+                : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
+            }`}
+          >
+            <Clipboard className="w-5 h-5" />
+            <span className="font-medium">Clipboard Sync</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSection('camera')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+              activeSection === 'camera'
                 ? 'bg-gradient-to-r from-[#b829dd]/20 to-transparent border-l-2 border-[#b829dd] text-white'
                 : 'text-[#8888a0] hover:bg-[#1a1a24] hover:text-white'
             }`}
           >
-            <Monitor className="w-5 h-5" />
-            <span className="font-medium">Screen Share</span>
+            <Camera className="w-5 h-5" />
+            <span className="font-medium">Remote Camera</span>
           </button>
         </div>
 
@@ -597,7 +622,7 @@ function DashboardContent() {
               className="p-4 md:p-8"
             >
               <h1 className="text-xl md:text-2xl font-bold text-white mb-2">Welcome back, {user.username}</h1>
-              <p className="text-[#8888a0] mb-8">Manage your remote access and screen sharing</p>
+              <p className="text-[#8888a0] mb-8">Manage your remote access and device sync</p>
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-8">
                 <div className="glass-panel rounded-2xl p-4 md:p-6">
@@ -628,24 +653,24 @@ function DashboardContent() {
 
                 <div className="glass-panel rounded-2xl p-4 md:p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-[#b829dd]/20 flex items-center justify-center">
-                      <Monitor className="w-5 h-5 md:w-6 md:h-6 text-[#b829dd]" />
+                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-[#ff6b35]/20 flex items-center justify-center">
+                      <Clipboard className="w-5 h-5 md:w-6 md:h-6 text-[#ff6b35]" />
                     </div>
-                    <span className="text-[10px] md:text-xs font-medium text-[#b829dd] bg-[#b829dd]/10 px-2 py-1 rounded-full">
-                      Idle
+                    <span className="text-[10px] md:text-xs font-medium text-[#ff6b35] bg-[#ff6b35]/10 px-2 py-1 rounded-full">
+                      Sync
                     </span>
                   </div>
                   <p className="text-2xl md:text-3xl font-bold text-white">0</p>
-                  <p className="text-xs md:text-sm text-[#8888a0]">Screen Sessions</p>
+                  <p className="text-xs md:text-sm text-[#8888a0]">Clipboard Items</p>
                 </div>
 
                 <div className="glass-panel rounded-2xl p-4 md:p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-[#ff6b35]/20 flex items-center justify-center">
-                      <Bell className="w-5 h-5 md:w-6 md:h-6 text-[#ff6b35]" />
+                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-[#b829dd]/20 flex items-center justify-center">
+                      <Bell className="w-5 h-5 md:w-6 md:h-6 text-[#b829dd]" />
                     </div>
                     {pendingRequests.length > 0 && (
-                      <span className="text-[10px] md:text-xs font-medium text-[#ff6b35] bg-[#ff6b35]/10 px-2 py-1 rounded-full">
+                      <span className="text-[10px] md:text-xs font-medium text-[#b829dd] bg-[#b829dd]/10 px-2 py-1 rounded-full">
                         {pendingRequests.length} new
                       </span>
                     )}
@@ -655,7 +680,7 @@ function DashboardContent() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
                 <div
                   onClick={() => setActiveSection('files')}
                   className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#39ff14]/50 transition-all duration-300 group"
@@ -667,36 +692,58 @@ function DashboardContent() {
                       </div>
                       <div>
                         <h3 className="text-lg md:text-xl font-semibold text-white">File Access</h3>
-                        <p className="text-xs md:text-sm text-[#8888a0]">Browse and manage remote files</p>
+                        <p className="text-xs md:text-sm text-[#8888a0]">Browse remote files</p>
                       </div>
                     </div>
                     <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#39ff14] group-hover:translate-x-1 transition-all" />
                   </div>
                   <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
                     <Lock className="w-3 h-3 md:w-4 md:h-4" />
-                    <span>End-to-end encrypted file transfer</span>
+                    <span>Encrypted file transfer</span>
                   </div>
                 </div>
 
                 <div
-                  onClick={() => setActiveSection('screen')}
+                  onClick={() => setActiveSection('clipboard')}
+                  className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#ff6b35]/50 transition-all duration-300 group"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3 md:gap-4">
+                      <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#ff6b35] to-[#ff4500] flex items-center justify-center">
+                        <Clipboard className="w-6 h-6 md:w-7 md:h-7 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg md:text-xl font-semibold text-white">Clipboard Sync</h3>
+                        <p className="text-xs md:text-sm text-[#8888a0]">Share text & links</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#ff6b35] group-hover:translate-x-1 transition-all" />
+                  </div>
+                  <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
+                    <Send className="w-3 h-3 md:w-4 md:h-4" />
+                    <span>Instant sync between devices</span>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setActiveSection('camera')}
                   className="glass-panel rounded-2xl p-4 md:p-6 cursor-pointer hover:border-[#b829dd]/50 transition-all duration-300 group"
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3 md:gap-4">
                       <div className="w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-gradient-to-br from-[#b829dd] to-[#9920bb] flex items-center justify-center">
-                        <Monitor className="w-6 h-6 md:w-7 md:h-7 text-white" />
+                        <Camera className="w-6 h-6 md:w-7 md:h-7 text-white" />
                       </div>
                       <div>
-                        <h3 className="text-lg md:text-xl font-semibold text-white">Screen Share</h3>
-                        <p className="text-xs md:text-sm text-[#8888a0]">View remote screen in real-time</p>
+                        <h3 className="text-lg md:text-xl font-semibold text-white">Remote Camera</h3>
+                        <p className="text-xs md:text-sm text-[#8888a0]">View device camera</p>
                       </div>
                     </div>
                     <ChevronRight className="w-5 h-5 md:w-6 md:h-6 text-[#8888a0] group-hover:text-[#b829dd] group-hover:translate-x-1 transition-all" />
                   </div>
                   <div className="flex items-center gap-2 text-xs md:text-sm text-[#5a5a70]">
-                    <Lock className="w-3 h-3 md:w-4 md:h-4" />
-                    <span>Secure screen streaming with control</span>
+                    <Video className="w-3 h-3 md:w-4 md:h-4" />
+                    <span>Live camera streaming</span>
                   </div>
                 </div>
               </div>
@@ -715,15 +762,27 @@ function DashboardContent() {
             </motion.div>
           )}
 
-          {activeSection === 'screen' && (
+          {activeSection === 'clipboard' && (
             <motion.div
-              key="screen"
+              key="clipboard"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               className="h-[calc(100vh-4rem)]"
             >
-              <ScreenShare devices={devices} currentDevice={device} />
+              <ClipboardSync devices={devices} currentDevice={device} />
+            </motion.div>
+          )}
+
+          {activeSection === 'camera' && (
+            <motion.div
+              key="camera"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="h-[calc(100vh-4rem)]"
+            >
+              <RemoteCamera devices={devices} currentDevice={device} />
             </motion.div>
           )}
         </AnimatePresence>

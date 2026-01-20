@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { 
   Camera, Video, VideoOff, RefreshCw, 
-  Laptop, Smartphone, Circle, Check, X,
+  Laptop, Smartphone, Circle, X,
   FlipHorizontal, Wifi, WifiOff, Eye
 } from 'lucide-react'
 import { DevicePair, supabase } from '@/lib/supabase'
@@ -36,6 +36,8 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ]
 }
 
@@ -45,8 +47,6 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
   const [isHostStreaming, setIsHostStreaming] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<string>('disconnected')
-  const [viewerDeviceId, setViewerDeviceId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment')
   const [activeStreams, setActiveStreams] = useState<CameraStream[]>([])
   
@@ -54,9 +54,10 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const pcRef = useRef<RTCPeerConnection | null>(null)
-  const channelRef = useRef<RealtimeChannel | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const channelsRef = useRef<Map<string, RealtimeChannel>>(new Map())
   const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([])
+  const isHostRef = useRef(false)
+  const targetDeviceRef = useRef<string | null>(null)
 
   const fetchActiveStreams = useCallback(async () => {
     const { data } = await supabase
@@ -94,14 +95,21 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
 
   const getRoomId = useCallback((deviceId1: string, deviceId2: string) => {
     const ids = [deviceId1, deviceId2].sort()
-    return `camera-room-${ids[0]}-${ids[1]}`
+    return `camera-${ids[0].slice(0, 8)}-${ids[1].slice(0, 8)}`
   }, [])
 
-  const cleanup = useCallback(() => {
+  const cleanupPeerConnection = useCallback(() => {
     if (pcRef.current) {
       pcRef.current.close()
       pcRef.current = null
     }
+    pendingCandidatesRef.current = []
+    setIsConnected(false)
+    setConnectionStatus('disconnected')
+  }, [])
+
+  const cleanupAll = useCallback(() => {
+    cleanupPeerConnection()
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop())
       streamRef.current = null
@@ -112,28 +120,37 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null
     }
-    pendingCandidatesRef.current = []
-    setIsConnected(false)
-    setConnectionStatus('disconnected')
+    channelsRef.current.forEach(ch => supabase.removeChannel(ch))
+    channelsRef.current.clear()
+  }, [cleanupPeerConnection])
+
+  const sendSignaling = useCallback((roomId: string, message: SignalingMessage) => {
+    const channel = channelsRef.current.get(roomId)
+    if (channel) {
+      channel.send({
+        type: 'broadcast',
+        event: 'signaling',
+        payload: message
+      })
+    }
   }, [])
 
-  const createPeerConnection = useCallback((isHost: boolean) => {
-    cleanup()
+  const createPeerConnection = useCallback((targetDeviceId: string) => {
+    cleanupPeerConnection()
     
     const pc = new RTCPeerConnection(ICE_SERVERS)
     pcRef.current = pc
+    targetDeviceRef.current = targetDeviceId
+
+    const roomId = currentDevice ? getRoomId(currentDevice.id, targetDeviceId) : ''
 
     pc.onicecandidate = (event) => {
-      if (event.candidate && channelRef.current && currentDevice) {
-        channelRef.current.send({
-          type: 'broadcast',
-          event: 'signaling',
-          payload: {
-            type: 'ice-candidate',
-            candidate: event.candidate.toJSON(),
-            senderId: currentDevice.id,
-            targetId: isHost ? viewerDeviceId : selectedDevice?.id
-          } as SignalingMessage
+      if (event.candidate && currentDevice) {
+        sendSignaling(roomId, {
+          type: 'ice-candidate',
+          candidate: event.candidate.toJSON(),
+          senderId: currentDevice.id,
+          targetId: targetDeviceId
         })
       }
     }
@@ -145,7 +162,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
         setIsConnected(true)
       } else if (pc.iceConnectionState === 'failed') {
-        console.error('ICE connection failed')
+        console.error('ICE connection failed, restarting...')
         pc.restartIce()
       } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
         setIsConnected(false)
@@ -162,21 +179,21 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
     }
 
     return pc
-  }, [cleanup, currentDevice, selectedDevice, viewerDeviceId])
+  }, [cleanupPeerConnection, currentDevice, getRoomId, sendSignaling])
 
-  const handleSignaling = useCallback(async (message: SignalingMessage) => {
+  const handleSignalingMessage = useCallback(async (message: SignalingMessage, roomId: string) => {
     if (!currentDevice) return
     if (message.senderId === currentDevice.id) return
     if (message.targetId && message.targetId !== currentDevice.id) return
 
-    console.log('Received signaling:', message.type, 'from:', message.senderId)
+    console.log('Signaling received:', message.type, 'from:', message.senderId)
 
     try {
       if (message.type === 'request-stream') {
-        if (isHostStreaming && streamRef.current) {
-          setViewerDeviceId(message.senderId)
+        if (isHostRef.current && streamRef.current) {
+          console.log('Host: Creating offer for viewer')
           
-          const pc = createPeerConnection(true)
+          const pc = createPeerConnection(message.senderId)
           
           streamRef.current.getTracks().forEach(track => {
             pc.addTrack(track, streamRef.current!)
@@ -185,110 +202,107 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
           const offer = await pc.createOffer()
           await pc.setLocalDescription(offer)
 
-          channelRef.current?.send({
-            type: 'broadcast',
-            event: 'signaling',
-            payload: {
-              type: 'offer',
-              sdp: offer,
-              senderId: currentDevice.id,
-              targetId: message.senderId
-            } as SignalingMessage
+          sendSignaling(roomId, {
+            type: 'offer',
+            sdp: pc.localDescription!,
+            senderId: currentDevice.id,
+            targetId: message.senderId
           })
         }
       } else if (message.type === 'offer') {
-        const pc = pcRef.current || createPeerConnection(false)
+        console.log('Viewer: Received offer, creating answer')
+        
+        let pc = pcRef.current
+        if (!pc || pc.signalingState === 'closed') {
+          pc = createPeerConnection(message.senderId)
+        }
         
         await pc.setRemoteDescription(new RTCSessionDescription(message.sdp!))
         
         for (const candidate of pendingCandidatesRef.current) {
-          await pc.addIceCandidate(new RTCIceCandidate(candidate))
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(candidate))
+          } catch (e) {
+            console.error('Error adding pending ICE candidate:', e)
+          }
         }
         pendingCandidatesRef.current = []
 
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
-        channelRef.current?.send({
-          type: 'broadcast',
-          event: 'signaling',
-          payload: {
-            type: 'answer',
-            sdp: answer,
-            senderId: currentDevice.id,
-            targetId: message.senderId
-          } as SignalingMessage
+        sendSignaling(roomId, {
+          type: 'answer',
+          sdp: pc.localDescription!,
+          senderId: currentDevice.id,
+          targetId: message.senderId
         })
       } else if (message.type === 'answer') {
+        console.log('Host: Received answer')
         if (pcRef.current && pcRef.current.signalingState === 'have-local-offer') {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(message.sdp!))
           
           for (const candidate of pendingCandidatesRef.current) {
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+            try {
+              await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+            } catch (e) {
+              console.error('Error adding pending ICE candidate:', e)
+            }
           }
           pendingCandidatesRef.current = []
         }
       } else if (message.type === 'ice-candidate') {
         if (pcRef.current && pcRef.current.remoteDescription) {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(message.candidate!))
+          try {
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(message.candidate!))
+          } catch (e) {
+            console.error('Error adding ICE candidate:', e)
+          }
         } else {
           pendingCandidatesRef.current.push(message.candidate!)
         }
-      } else if (message.type === 'camera-ready') {
-        if (isStreaming && selectedDevice?.id === message.senderId) {
-          createPeerConnection(false)
-          
-          channelRef.current?.send({
-            type: 'broadcast',
-            event: 'signaling',
-            payload: {
-              type: 'request-stream',
-              senderId: currentDevice.id,
-              targetId: message.senderId
-            } as SignalingMessage
-          })
-        }
       } else if (message.type === 'camera-stopped') {
         if (selectedDevice?.id === message.senderId) {
-          cleanup()
+          cleanupPeerConnection()
           setIsStreaming(false)
+          setSelectedDevice(null)
         }
       }
     } catch (err) {
       console.error('Signaling error:', err)
     }
-  }, [currentDevice, isHostStreaming, isStreaming, selectedDevice, createPeerConnection, cleanup])
+  }, [currentDevice, selectedDevice, createPeerConnection, sendSignaling, cleanupPeerConnection])
 
-  const joinSignalingChannel = useCallback((targetDeviceId: string) => {
-    if (!currentDevice) return
+  const joinChannel = useCallback((targetDeviceId: string) => {
+    if (!currentDevice) return null
 
     const roomId = getRoomId(currentDevice.id, targetDeviceId)
     
-    if (channelRef.current) {
-      supabase.removeChannel(channelRef.current)
+    if (channelsRef.current.has(roomId)) {
+      return roomId
     }
 
-    const channel = supabase.channel(roomId)
+    const channel = supabase.channel(roomId, {
+      config: { broadcast: { self: false } }
+    })
     
     channel
       .on('broadcast', { event: 'signaling' }, ({ payload }: { payload: SignalingMessage }) => {
-        handleSignaling(payload)
+        handleSignalingMessage(payload, roomId)
       })
       .subscribe((status) => {
-        console.log('Channel status:', status)
+        console.log(`Channel ${roomId} status:`, status)
       })
 
-    channelRef.current = channel
-  }, [currentDevice, getRoomId, handleSignaling])
+    channelsRef.current.set(roomId, channel)
+    return roomId
+  }, [currentDevice, getRoomId, handleSignalingMessage])
 
   useEffect(() => {
     return () => {
-      cleanup()
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current)
-      }
+      cleanupAll()
     }
-  }, [cleanup])
+  }, [cleanupAll])
 
   const updateStreamStatus = async (streaming: boolean) => {
     if (!currentDevice) return
@@ -327,6 +341,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
       })
 
       streamRef.current = stream
+      isHostRef.current = true
 
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream
@@ -338,49 +353,29 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
 
       const remoteDevices = devices.filter(d => d.id !== currentDevice.id)
       remoteDevices.forEach(device => {
-        joinSignalingChannel(device.id)
+        joinChannel(device.id)
       })
-
-      setTimeout(() => {
-        remoteDevices.forEach(device => {
-          const roomId = getRoomId(currentDevice.id, device.id)
-          const channel = supabase.channel(roomId)
-          channel.send({
-            type: 'broadcast',
-            event: 'signaling',
-            payload: {
-              type: 'camera-ready',
-              senderId: currentDevice.id
-            } as SignalingMessage
-          })
-        })
-      }, 500)
     } catch (err) {
       console.error('Failed to start camera:', err)
     }
   }
 
   const stopHostCamera = async () => {
-    if (channelRef.current && currentDevice) {
+    if (currentDevice) {
       const remoteDevices = devices.filter(d => d.id !== currentDevice.id)
       remoteDevices.forEach(device => {
         const roomId = getRoomId(currentDevice.id, device.id)
-        const channel = supabase.channel(roomId)
-        channel.send({
-          type: 'broadcast',
-          event: 'signaling',
-          payload: {
-            type: 'camera-stopped',
-            senderId: currentDevice.id
-          } as SignalingMessage
+        sendSignaling(roomId, {
+          type: 'camera-stopped',
+          senderId: currentDevice.id
         })
       })
     }
 
     await updateStreamStatus(false)
-    cleanup()
+    isHostRef.current = false
+    cleanupAll()
     setIsHostStreaming(false)
-    setViewerDeviceId(null)
   }
 
   const switchCamera = async () => {
@@ -422,28 +417,28 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
   const viewRemoteCamera = async (device: DevicePair) => {
     if (!currentDevice) return
 
+    cleanupPeerConnection()
+    
     setSelectedDevice(device)
-    setLoading(true)
     setIsStreaming(true)
+    isHostRef.current = false
     
-    joinSignalingChannel(device.id)
+    const roomId = joinChannel(device.id)
     
-    setTimeout(() => {
-      channelRef.current?.send({
-        type: 'broadcast',
-        event: 'signaling',
-        payload: {
+    if (roomId) {
+      setTimeout(() => {
+        console.log('Viewer: Requesting stream from', device.device_name)
+        sendSignaling(roomId, {
           type: 'request-stream',
           senderId: currentDevice.id,
           targetId: device.id
-        } as SignalingMessage
-      })
-      setLoading(false)
-    }, 500)
+        })
+      }, 1000)
+    }
   }
 
-  const stopViewing = async () => {
-    cleanup()
+  const stopViewing = () => {
+    cleanupPeerConnection()
     setIsStreaming(false)
     setSelectedDevice(null)
   }
@@ -465,7 +460,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
           <div className="mb-6">
             <div className="text-xs text-[#39ff14] uppercase tracking-wider px-2 mb-2 flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
-              Live Now ({streamingDevices.length})
+              <span>Live Now ({streamingDevices.length})</span>
             </div>
             <div className="space-y-2">
               {streamingDevices.map(device => (
@@ -522,7 +517,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
                     </p>
                   </div>
                   {isLive ? (
-                    <div className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
+                    <span className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
                   ) : (
                     <Circle className={`w-2 h-2 ${device.is_online ? 'text-[#ff6b35] fill-[#ff6b35]' : 'text-[#5a5a70] fill-[#5a5a70]'}`} />
                   )}
@@ -540,7 +535,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
         {isHostStreaming && (
           <div className="mb-6 p-4 bg-[#ff6b35]/10 border border-[#ff6b35]/30 rounded-xl">
             <div className="flex items-center gap-2 mb-3">
-              <div className="w-2 h-2 rounded-full bg-[#ff6b35] animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-[#ff6b35] animate-pulse" />
               <h3 className="text-sm font-semibold text-white">Your Camera is Live</h3>
             </div>
             <p className="text-xs text-[#8888a0] mb-3">
@@ -589,7 +584,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
         )}
       </div>
 
-      <div className="flex-1 flex flex-col" ref={containerRef}>
+      <div className="flex-1 flex flex-col">
         {isHostStreaming ? (
           <div className="flex-1 relative bg-black">
             <video
@@ -600,7 +595,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
               className="w-full h-full object-contain"
             />
             <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 bg-black/60 backdrop-blur rounded-full">
-              <div className="w-2 h-2 rounded-full bg-[#ff073a] animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-[#ff073a] animate-pulse" />
               <span className="text-xs text-white">Broadcasting</span>
             </div>
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-black/60 backdrop-blur rounded-full">
@@ -635,7 +630,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
             <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 bg-black/60 backdrop-blur rounded-full">
               {isConnected ? (
                 <>
-                  <div className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
+                  <span className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
                   <span className="text-xs text-white">Live</span>
                 </>
               ) : (
@@ -681,9 +676,9 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
                     {streamingDevices.length} Camera{streamingDevices.length > 1 ? 's' : ''} Live
                   </h3>
                   <p className="text-[#8888a0] mb-6">
-                    Click on a device in the sidebar to view their camera
+                    Click on a device to view their camera
                   </p>
-                  <div className="grid gap-2 md:hidden">
+                  <div className="grid gap-2">
                     {streamingDevices.map(device => (
                       <Button
                         key={device.id}

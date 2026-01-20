@@ -63,14 +63,32 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   }, [currentDevice])
 
   useEffect(() => {
-    if (isStreaming) {
-      const interval = setInterval(() => {
-        setFps(Math.floor(Math.random() * 10 + 25))
-        setLatency(Math.floor(Math.random() * 20 + 10))
-      }, 1000)
-      return () => clearInterval(interval)
+    if (!currentDevice || !selectedDevice || !isStreaming) return
+
+    const channel = supabase
+      .channel(`screen-session-${currentDevice.id}-${selectedDevice.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'screen_sessions',
+          filter: `viewer_device_id=eq.${currentDevice.id}`
+        },
+        (payload) => {
+          const updatedSession = payload.new as any
+          if (updatedSession.host_device_id === selectedDevice.id && updatedSession.status === 'ended') {
+            setIsStreaming(false)
+            setConnectionStatus('disconnected')
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
     }
-  }, [isStreaming])
+  }, [currentDevice, selectedDevice, isStreaming])
 
   useEffect(() => {
     if (!currentDevice || !selectedDevice || accessStatus !== 'pending') return
@@ -154,6 +172,22 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
 
     if (existingRequest) {
       setAccessStatus(existingRequest.status as 'pending' | 'approved' | 'rejected')
+      
+      // If approved, check for active session
+      if (existingRequest.status === 'approved') {
+        const { data: activeSession } = await supabase
+          .from('screen_sessions')
+          .select('*')
+          .eq('host_device_id', device.id)
+          .eq('viewer_device_id', currentDevice?.id)
+          .eq('status', 'active')
+          .maybeSingle()
+        
+        if (activeSession) {
+          setIsStreaming(true)
+          setConnectionStatus('connected')
+        }
+      }
     } else {
       setAccessStatus('none')
     }
@@ -200,6 +234,14 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
     setIsStreaming(true)
 
     if (currentDevice && selectedDevice) {
+      // End any existing active sessions first to avoid duplicates
+      await supabase
+        .from('screen_sessions')
+        .update({ status: 'ended', ended_at: new Date().toISOString() })
+        .eq('host_device_id', selectedDevice.id)
+        .eq('viewer_device_id', currentDevice.id)
+        .eq('status', 'active')
+
       await supabase
         .from('screen_sessions')
         .insert([{
@@ -213,14 +255,34 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   const stopStreaming = async () => {
     setIsStreaming(false)
     setConnectionStatus('disconnected')
+
+    if (currentDevice && selectedDevice) {
+      await supabase
+        .from('screen_sessions')
+        .update({ status: 'ended', ended_at: new Date().toISOString() })
+        .eq('host_device_id', selectedDevice.id)
+        .eq('viewer_device_id', currentDevice.id)
+        .eq('status', 'active')
+    }
   }
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      screenRef.current?.requestFullscreen()
-      setIsFullscreen(true)
-    } else {
-      document.exitFullscreen()
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        if (screenRef.current?.requestFullscreen) {
+          await screenRef.current.requestFullscreen()
+          setIsFullscreen(true)
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen()
+          setIsFullscreen(false)
+        }
+      }
+    } catch (error) {
+      console.error('Fullscreen request failed:', error)
+      // If permission is denied, we still want to keep the local state consistent
+      // but we can't do anything about the browser's decision
       setIsFullscreen(false)
     }
   }

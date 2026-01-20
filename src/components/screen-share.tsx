@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Monitor, MonitorOff, Play, Pause, Maximize2, Minimize2, 
@@ -20,6 +20,13 @@ interface ScreenShareProps {
   currentDevice: DevicePair | null
 }
 
+interface WaitingSession {
+  id: string
+  host_device_id: string
+  viewer_device_id: string
+  status: string
+}
+
 export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   const [selectedDevice, setSelectedDevice] = useState<DevicePair | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
@@ -34,19 +41,38 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [zoom, setZoom] = useState(100)
   const [showDeviceSidebar, setShowDeviceSidebar] = useState(false)
-  const [hostShareRequest, setHostShareRequest] = useState<AccessRequest | null>(null)
-  const [viewerWaiting, setViewerWaiting] = useState(false)
+  const [waitingSession, setWaitingSession] = useState<WaitingSession | null>(null)
   
   const screenRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const webrtcRef = useRef<WebRTCManager | null>(null)
 
+  const checkForWaitingSessions = useCallback(async () => {
+    if (!currentDevice) return
+
+    const { data } = await supabase
+      .from('screen_sessions')
+      .select('*')
+      .eq('host_device_id', currentDevice.id)
+      .eq('status', 'waiting')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    console.log('Checking for waiting sessions:', data)
+    if (data) {
+      setWaitingSession(data)
+    } else {
+      setWaitingSession(null)
+    }
+  }, [currentDevice])
+
   useEffect(() => {
     if (currentDevice) {
       fetchPendingRequests()
-      checkIfHostShouldShare()
+      checkForWaitingSessions()
 
-      const channel = supabase
+      const requestChannel = supabase
         .channel(`screen-requests-for-${currentDevice.id}`)
         .on(
           'postgres_changes',
@@ -58,16 +84,36 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
           },
           () => {
             fetchPendingRequests()
-            checkIfHostShouldShare()
           }
         )
         .subscribe()
 
+      const sessionChannel = supabase
+        .channel(`screen-sessions-host-${currentDevice.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'screen_sessions',
+            filter: `host_device_id=eq.${currentDevice.id}`
+          },
+          (payload) => {
+            console.log('Session change detected:', payload)
+            checkForWaitingSessions()
+          }
+        )
+        .subscribe()
+
+      const pollInterval = setInterval(checkForWaitingSessions, 3000)
+
       return () => {
-        supabase.removeChannel(channel)
+        supabase.removeChannel(requestChannel)
+        supabase.removeChannel(sessionChannel)
+        clearInterval(pollInterval)
       }
     }
-  }, [currentDevice])
+  }, [currentDevice, checkForWaitingSessions])
 
   useEffect(() => {
     return () => {
@@ -123,66 +169,6 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
       supabase.removeChannel(channel)
     }
   }, [currentDevice, selectedDevice, accessStatus])
-
-  const checkIfHostShouldShare = async () => {
-    if (!currentDevice) return
-
-    const { data } = await supabase
-      .from('access_requests')
-      .select('*')
-      .eq('target_device_id', currentDevice.id)
-      .eq('request_type', 'screen_share')
-      .eq('status', 'approved')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (data) {
-      setHostShareRequest(data)
-      
-      const { data: waitingSession } = await supabase
-        .from('screen_sessions')
-        .select('*')
-        .eq('host_device_id', currentDevice.id)
-        .eq('viewer_device_id', data.requester_device_id)
-        .eq('status', 'waiting')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      
-      if (waitingSession) {
-        setViewerWaiting(true)
-      }
-    }
-  }
-
-  useEffect(() => {
-    if (!currentDevice) return
-
-    const channel = supabase
-      .channel(`screen-sessions-for-host-${currentDevice.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'screen_sessions',
-          filter: `host_device_id=eq.${currentDevice.id}`
-        },
-        (payload) => {
-          const newSession = payload.new as any
-          if (newSession.status === 'waiting') {
-            setViewerWaiting(true)
-            checkIfHostShouldShare()
-          }
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [currentDevice])
 
   const fetchPendingRequests = async () => {
     if (!currentDevice) return
@@ -259,43 +245,25 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
       .eq('id', requestId)
     
     fetchPendingRequests()
-    
-    if (status === 'approved') {
-      checkIfHostShouldShare()
-    }
   }
 
   const startHostScreenShare = async () => {
-    if (!currentDevice || !hostShareRequest) return
-
-    const { data: waitingSession } = await supabase
-      .from('screen_sessions')
-      .select('*')
-      .eq('host_device_id', currentDevice.id)
-      .eq('viewer_device_id', hostShareRequest.requester_device_id)
-      .eq('status', 'waiting')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (!waitingSession) {
-      console.error('No waiting session found. Viewer needs to click Start Viewing first.')
+    if (!currentDevice || !waitingSession) {
+      console.error('No current device or waiting session')
       return
     }
 
-    const sessionId = waitingSession.id
+    console.log('Starting host screen share for session:', waitingSession.id)
 
     await supabase
       .from('screen_sessions')
       .update({ status: 'active' })
-      .eq('id', sessionId)
-
-    console.log('Host starting with session ID:', sessionId)
+      .eq('id', waitingSession.id)
 
     webrtcRef.current = new WebRTCManager(
       currentDevice.id,
-      hostShareRequest.requester_device_id,
-      sessionId,
+      waitingSession.viewer_device_id,
+      waitingSession.id,
       true
     )
 
@@ -315,7 +283,7 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
     const success = await webrtcRef.current.startScreenShare()
     if (success) {
       setIsHostSharing(true)
-      setViewerWaiting(false)
+      setWaitingSession(null)
     }
   }
 
@@ -325,8 +293,7 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
       webrtcRef.current = null
     }
     setIsHostSharing(false)
-    setHostShareRequest(null)
-    setViewerWaiting(false)
+    setWaitingSession(null)
 
     if (currentDevice) {
       await supabase
@@ -364,7 +331,7 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
       return
     }
 
-    console.log('Viewer starting with session ID:', session.id)
+    console.log('Viewer created session:', session.id)
 
     webrtcRef.current = new WebRTCManager(
       currentDevice.id,
@@ -449,6 +416,12 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   const handleDeviceSelectMobile = (device: DevicePair) => {
     handleDeviceSelect(device)
     setShowDeviceSidebar(false)
+  }
+
+  const getViewerDeviceName = () => {
+    if (!waitingSession) return 'Unknown'
+    const device = devices.find(d => d.id === waitingSession.viewer_device_id)
+    return device?.device_name || 'Unknown Device'
   }
 
   return (
@@ -593,14 +566,14 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
           </div>
         )}
 
-        {(hostShareRequest || viewerWaiting) && !isHostSharing && (
-          <div className="mb-6 p-4 bg-[#39ff14]/10 border border-[#39ff14]/30 rounded-xl">
+        {waitingSession && !isHostSharing && (
+          <div className="mb-6 p-4 bg-[#39ff14]/10 border border-[#39ff14]/30 rounded-xl animate-pulse">
             <div className="flex items-center gap-2 mb-3">
               <Share2 className="w-5 h-5 text-[#39ff14]" />
               <h3 className="text-sm font-semibold text-white">Share Your Screen</h3>
             </div>
             <p className="text-xs text-[#8888a0] mb-3">
-              {viewerWaiting ? 'Viewer is waiting for your screen' : 'A device is waiting to view your screen'}
+              {getViewerDeviceName()} is waiting to view your screen
             </p>
             <Button
               onClick={startHostScreenShare}
@@ -681,14 +654,14 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
               </Button>
               <p className="hidden md:block text-[#5a5a70] text-sm">Choose a device from the sidebar</p>
               
-              {(hostShareRequest || viewerWaiting) && !isHostSharing && (
-                <div className="mt-8 p-4 bg-[#39ff14]/10 border border-[#39ff14]/30 rounded-xl max-w-sm mx-auto">
+              {waitingSession && !isHostSharing && (
+                <div className="mt-8 p-4 bg-[#39ff14]/10 border border-[#39ff14]/30 rounded-xl max-w-sm mx-auto animate-pulse">
                   <div className="flex items-center justify-center gap-2 mb-3">
                     <Share2 className="w-5 h-5 text-[#39ff14]" />
                     <span className="text-sm font-semibold text-white">Share Request</span>
                   </div>
                   <p className="text-xs text-[#8888a0] mb-3">
-                    {viewerWaiting ? 'Viewer is waiting for your screen' : 'Someone wants to view your screen'}
+                    {getViewerDeviceName()} is waiting to view your screen
                   </p>
                   <Button
                     onClick={startHostScreenShare}

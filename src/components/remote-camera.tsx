@@ -463,10 +463,10 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
 
         {streamingDevices.length > 0 && (
           <div className="mb-6">
-            <p className="text-xs text-[#39ff14] uppercase tracking-wider px-2 mb-2 flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
+            <div className="text-xs text-[#39ff14] uppercase tracking-wider px-2 mb-2 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
               Live Now ({streamingDevices.length})
-            </p>
+            </div>
             <div className="space-y-2">
               {streamingDevices.map(device => (
                 <button

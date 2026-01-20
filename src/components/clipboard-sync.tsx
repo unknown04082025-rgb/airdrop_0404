@@ -103,7 +103,20 @@ export function ClipboardSync({ devices, currentDevice }: ClipboardSyncProps) {
 
   const copyToClipboard = async (item: ClipboardItem) => {
     try {
-      await navigator.clipboard.writeText(item.content)
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(item.content)
+      } else {
+        const textArea = document.createElement('textarea')
+        textArea.value = item.content
+        textArea.style.position = 'fixed'
+        textArea.style.left = '-999999px'
+        textArea.style.top = '-999999px'
+        document.body.appendChild(textArea)
+        textArea.focus()
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+      }
       setCopiedId(item.id)
       setTimeout(() => setCopiedId(null), 2000)
 

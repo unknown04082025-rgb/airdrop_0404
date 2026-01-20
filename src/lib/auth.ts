@@ -152,7 +152,7 @@ function generateBrowserFingerprint(): string {
   return fingerprint
 }
 
-export async function registerDevice(userId: string, deviceName: string): Promise<{ device: { id: string; device_id: string } | null; error: string | null }> {
+export async function registerDevice(userId: string, deviceName: string): Promise<{ device: { id: string; device_id: string } | null; error: string | null; isReturningDevice: boolean }> {
   try {
     const { osName, osVersion, browserName, browserVersion } = getDeviceInfo()
     const browserFingerprint = generateBrowserFingerprint()
@@ -162,17 +162,19 @@ export async function registerDevice(userId: string, deviceName: string): Promis
     const timezone = typeof window !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : ''
     const language = typeof navigator !== 'undefined' ? navigator.language : ''
     
-    const { data: existingDevice } = await supabase
+    const { data: existingDevices } = await supabase
       .from('device_pairs')
       .select('*')
       .eq('user_id', userId)
-      .single()
     
-    if (existingDevice) {
+    const matchingDevice = existingDevices?.find(d => 
+      d.browser_fingerprint === browserFingerprint
+    )
+    
+    if (matchingDevice) {
       const { data, error } = await supabase
         .from('device_pairs')
         .update({
-          device_name: deviceName,
           is_online: true,
           last_seen: new Date().toISOString(),
           os_name: osName,
@@ -181,31 +183,27 @@ export async function registerDevice(userId: string, deviceName: string): Promis
           browser_version: browserVersion,
           location_city: city,
           location_country: country,
-          ip_address: ip,
-          browser_fingerprint: browserFingerprint,
-          screen_resolution: screenRes,
-          color_depth: colorDepth,
-          timezone: timezone,
-          language: language
+          ip_address: ip
         })
-        .eq('id', existingDevice.id)
+        .eq('id', matchingDevice.id)
         .select()
         .single()
       
       if (error) {
-        return { device: null, error: error.message }
+        return { device: null, error: error.message, isReturningDevice: false }
       }
       
-      return { device: data, error: null }
+      return { device: data, error: null, isReturningDevice: true }
     }
     
     const deviceId = generateDeviceId()
+    const finalDeviceName = deviceName || `${osName} ${browserName}`
     
     const { data, error } = await supabase
       .from('device_pairs')
       .insert([{ 
         user_id: userId, 
-        device_name: deviceName, 
+        device_name: finalDeviceName, 
         device_id: deviceId, 
         is_online: true,
         os_name: osName,
@@ -225,12 +223,12 @@ export async function registerDevice(userId: string, deviceName: string): Promis
       .single()
 
     if (error) {
-      return { device: null, error: error.message }
+      return { device: null, error: error.message, isReturningDevice: false }
     }
 
-    return { device: data, error: null }
+    return { device: data, error: null, isReturningDevice: false }
   } catch (err) {
-    return { device: null, error: 'Failed to register device' }
+    return { device: null, error: 'Failed to register device', isReturningDevice: false }
   }
 }
 

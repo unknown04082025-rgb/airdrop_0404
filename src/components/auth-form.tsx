@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Shield, Lock, User, Mail, Eye, EyeOff, Laptop, AlertCircle, CheckCircle2 } from 'lucide-react'
@@ -23,7 +23,13 @@ export function AuthForm() {
   const [deviceName, setDeviceName] = useState('')
 
   const router = useRouter()
-  const { setUser, setDevice } = useAuth()
+  const { user, setUser, setDevice } = useAuth()
+
+  useEffect(() => {
+    if (user) {
+      router.push('/dashboard')
+    }
+  }, [user, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,7 +46,7 @@ export function AuthForm() {
       }
 
       if (user) {
-        const { device, error: deviceError } = await registerDevice(user.id, deviceName || 'Unknown Device')
+        const { device, error: deviceError, isReturningDevice } = await registerDevice(user.id, deviceName || 'Unknown Device')
         if (deviceError) {
           setError(deviceError)
           setLoading(false)
@@ -49,7 +55,12 @@ export function AuthForm() {
         
         setUser(user)
         setDevice(device as any)
-        setSuccess('Login successful! Redirecting...')
+        
+        if (isReturningDevice) {
+          setSuccess(`Welcome back, ${user.username}! Redirecting...`)
+        } else {
+          setSuccess('New device registered! Redirecting...')
+        }
         setTimeout(() => router.push('/dashboard'), 1500)
       }
     } else {
@@ -224,7 +235,9 @@ export function AuthForm() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="deviceName" className="text-[#8888a0] text-sm">Device Name</Label>
+              <Label htmlFor="deviceName" className="text-[#8888a0] text-sm">
+                Device Name {isLogin && <span className="text-[#5a5a70]">(optional for returning devices)</span>}
+              </Label>
               <div className="relative">
                 <Laptop className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8888a0]" />
                 <Input
@@ -232,7 +245,7 @@ export function AuthForm() {
                   type="text"
                   value={deviceName}
                   onChange={(e) => setDeviceName(e.target.value)}
-                  placeholder="My Laptop"
+                  placeholder={isLogin ? "Leave empty if returning" : "My Laptop"}
                   className="pl-10 bg-[#1a1a24] border-[#2a2a3a] text-white placeholder:text-[#5a5a70] focus:border-[#00f0ff] focus:ring-[#00f0ff]/20"
                 />
               </div>

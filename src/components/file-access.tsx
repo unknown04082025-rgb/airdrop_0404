@@ -7,7 +7,7 @@ import {
   ChevronRight, Search, Download, Upload, Trash2,
   RefreshCw, Grid, List, Home, HardDrive, Laptop, Circle, Lock,
   Check, X, Eye, MoreVertical, FolderPlus, CloudUpload, Clock, HardDriveUpload,
-  CheckCircle2, XCircle, Timer, AlertCircle, Pause, Play, Database
+  CheckCircle2, XCircle, Timer, AlertCircle, Pause, Play, Database, Infinity as InfinityIcon
 } from 'lucide-react'
 import { DevicePair, supabase, AccessRequest } from '@/lib/supabase'
 import { Input } from '@/components/ui/input'
@@ -724,7 +724,7 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
                   <span className="text-[#5a5a70] flex items-center gap-1">
                     {storageInfo.isUnlimited ? (
                       <>
-                        <Infinity className="w-3 h-3" />
+                          <InfinityIcon className="w-3 h-3" />
                         Unlimited
                       </>
                     ) : (

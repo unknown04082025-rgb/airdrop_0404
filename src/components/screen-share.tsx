@@ -1,14 +1,15 @@
 "use client"
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Monitor, MonitorOff, Play, Pause, Maximize2, Minimize2, 
   Volume2, VolumeX, RefreshCw, Settings, Laptop, Circle,
   Mouse, Keyboard, Lock, Check, X, AlertTriangle, Wifi, WifiOff,
-  ZoomIn, ZoomOut, RotateCcw, Camera, HardDrive
+  ZoomIn, ZoomOut, RotateCcw, Camera, Share2, Eye
 } from 'lucide-react'
-import { DevicePair, supabase, AccessRequest, ScreenSession } from '@/lib/supabase'
+import { DevicePair, supabase, AccessRequest } from '@/lib/supabase'
+import { WebRTCManager } from '@/lib/webrtc'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
@@ -22,6 +23,7 @@ interface ScreenShareProps {
 export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   const [selectedDevice, setSelectedDevice] = useState<DevicePair | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isHostSharing, setIsHostSharing] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
   const [quality, setQuality] = useState(80)
@@ -30,15 +32,19 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>([])
   const [loading, setLoading] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
-  const [fps, setFps] = useState(0)
-  const [latency, setLatency] = useState(0)
   const [zoom, setZoom] = useState(100)
   const [showDeviceSidebar, setShowDeviceSidebar] = useState(false)
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [hostShareRequest, setHostShareRequest] = useState<AccessRequest | null>(null)
+  
   const screenRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const webrtcRef = useRef<WebRTCManager | null>(null)
 
   useEffect(() => {
     if (currentDevice) {
       fetchPendingRequests()
+      checkIfHostShouldShare()
 
       const channel = supabase
         .channel(`screen-requests-for-${currentDevice.id}`)
@@ -52,6 +58,7 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
           },
           () => {
             fetchPendingRequests()
+            checkIfHostShouldShare()
           }
         )
         .subscribe()
@@ -63,32 +70,12 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   }, [currentDevice])
 
   useEffect(() => {
-    if (!currentDevice || !selectedDevice || !isStreaming) return
-
-    const channel = supabase
-      .channel(`screen-session-${currentDevice.id}-${selectedDevice.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'screen_sessions',
-          filter: `viewer_device_id=eq.${currentDevice.id}`
-        },
-        (payload) => {
-          const updatedSession = payload.new as any
-          if (updatedSession.host_device_id === selectedDevice.id && updatedSession.status === 'ended') {
-            setIsStreaming(false)
-            setConnectionStatus('disconnected')
-          }
-        }
-      )
-      .subscribe()
-
     return () => {
-      supabase.removeChannel(channel)
+      if (webrtcRef.current) {
+        webrtcRef.current.cleanup()
+      }
     }
-  }, [currentDevice, selectedDevice, isStreaming])
+  }, [])
 
   useEffect(() => {
     if (!currentDevice || !selectedDevice || accessStatus !== 'pending') return
@@ -137,6 +124,24 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
     }
   }, [currentDevice, selectedDevice, accessStatus])
 
+  const checkIfHostShouldShare = async () => {
+    if (!currentDevice) return
+
+    const { data } = await supabase
+      .from('access_requests')
+      .select('*')
+      .eq('target_device_id', currentDevice.id)
+      .eq('request_type', 'screen_share')
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (data) {
+      setHostShareRequest(data)
+    }
+  }
+
   const fetchPendingRequests = async () => {
     if (!currentDevice) return
     
@@ -153,6 +158,11 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   const handleDeviceSelect = async (device: DevicePair) => {
     if (device.id === currentDevice?.id) {
       return
+    }
+
+    if (webrtcRef.current) {
+      webrtcRef.current.cleanup()
+      webrtcRef.current = null
     }
 
     setSelectedDevice(device)
@@ -173,7 +183,6 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
     if (existingRequest) {
       setAccessStatus(existingRequest.status as 'pending' | 'approved' | 'rejected')
       
-      // If approved, check for active session
       if (existingRequest.status === 'approved') {
         const { data: activeSession } = await supabase
           .from('screen_sessions')
@@ -184,8 +193,7 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
           .maybeSingle()
         
         if (activeSession) {
-          setIsStreaming(true)
-          setConnectionStatus('connected')
+          setActiveSessionId(activeSession.id)
         }
       }
     } else {
@@ -223,36 +231,144 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
       .eq('id', requestId)
     
     fetchPendingRequests()
-  }
-
-  const startStreaming = async () => {
-    setConnectionStatus('connecting')
     
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    setConnectionStatus('connected')
-    setIsStreaming(true)
-
-    if (currentDevice && selectedDevice) {
-      // End any existing active sessions first to avoid duplicates
-      await supabase
-        .from('screen_sessions')
-        .update({ status: 'ended', ended_at: new Date().toISOString() })
-        .eq('host_device_id', selectedDevice.id)
-        .eq('viewer_device_id', currentDevice.id)
-        .eq('status', 'active')
-
-      await supabase
-        .from('screen_sessions')
-        .insert([{
-          host_device_id: selectedDevice.id,
-          viewer_device_id: currentDevice.id,
-          status: 'active'
-        }])
+    if (status === 'approved') {
+      checkIfHostShouldShare()
     }
   }
 
-  const stopStreaming = async () => {
+  const startHostScreenShare = async () => {
+    if (!currentDevice || !hostShareRequest) return
+
+    const sessionId = `${hostShareRequest.requester_device_id}-${currentDevice.id}-${Date.now()}`
+    
+    const { data: session } = await supabase
+      .from('screen_sessions')
+      .insert([{
+        host_device_id: currentDevice.id,
+        viewer_device_id: hostShareRequest.requester_device_id,
+        status: 'active'
+      }])
+      .select()
+      .single()
+
+    if (!session) return
+
+    webrtcRef.current = new WebRTCManager(
+      currentDevice.id,
+      hostShareRequest.requester_device_id,
+      session.id,
+      true
+    )
+
+    webrtcRef.current.setOnConnectionStateChange((state) => {
+      if (state === 'connected') {
+        setIsHostSharing(true)
+      } else if (state === 'disconnected' || state === 'failed') {
+        setIsHostSharing(false)
+      }
+    })
+
+    webrtcRef.current.setOnError((error) => {
+      console.error('WebRTC error:', error)
+    })
+
+    const success = await webrtcRef.current.startScreenShare()
+    if (success) {
+      setIsHostSharing(true)
+    }
+  }
+
+  const stopHostScreenShare = async () => {
+    if (webrtcRef.current) {
+      webrtcRef.current.cleanup()
+      webrtcRef.current = null
+    }
+    setIsHostSharing(false)
+    setHostShareRequest(null)
+
+    if (currentDevice) {
+      await supabase
+        .from('screen_sessions')
+        .update({ status: 'ended', ended_at: new Date().toISOString() })
+        .eq('host_device_id', currentDevice.id)
+        .eq('status', 'active')
+    }
+  }
+
+  const startViewing = async () => {
+    if (!currentDevice || !selectedDevice) return
+
+    setConnectionStatus('connecting')
+
+    await supabase
+      .from('screen_sessions')
+      .update({ status: 'ended', ended_at: new Date().toISOString() })
+      .eq('host_device_id', selectedDevice.id)
+      .eq('viewer_device_id', currentDevice.id)
+      .eq('status', 'active')
+
+    const { data: session } = await supabase
+      .from('screen_sessions')
+      .insert([{
+        host_device_id: selectedDevice.id,
+        viewer_device_id: currentDevice.id,
+        status: 'active'
+      }])
+      .select()
+      .single()
+
+    if (!session) {
+      setConnectionStatus('disconnected')
+      return
+    }
+
+    setActiveSessionId(session.id)
+
+    webrtcRef.current = new WebRTCManager(
+      currentDevice.id,
+      selectedDevice.id,
+      session.id,
+      false
+    )
+
+    webrtcRef.current.setOnRemoteStream((stream) => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play().catch(console.error)
+      }
+      setConnectionStatus('connected')
+      setIsStreaming(true)
+    })
+
+    webrtcRef.current.setOnConnectionStateChange((state) => {
+      if (state === 'connected') {
+        setConnectionStatus('connected')
+        setIsStreaming(true)
+      } else if (state === 'disconnected' || state === 'failed') {
+        setConnectionStatus('disconnected')
+        setIsStreaming(false)
+      }
+    })
+
+    webrtcRef.current.setOnError((error) => {
+      console.error('WebRTC error:', error)
+      setConnectionStatus('disconnected')
+    })
+
+    await webrtcRef.current.waitForOffer()
+  }
+
+  const stopViewing = async () => {
+    if (webrtcRef.current) {
+      webrtcRef.current.cleanup()
+      webrtcRef.current = null
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+
     setIsStreaming(false)
     setConnectionStatus('disconnected')
 
@@ -281,8 +397,6 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
       }
     } catch (error) {
       console.error('Fullscreen request failed:', error)
-      // If permission is denied, we still want to keep the local state consistent
-      // but we can't do anything about the browser's decision
       setIsFullscreen(false)
     }
   }
@@ -355,43 +469,6 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
                     </div>
                   )}
                 </div>
-
-                {isStreaming && (
-                  <div className="space-y-4 mb-6 p-4 bg-[#1a1a24] rounded-xl">
-                    <h3 className="text-sm font-semibold text-white">Stream Settings</h3>
-                    
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs text-[#8888a0]">Quality</Label>
-                        <span className="text-xs text-white">{quality}%</span>
-                      </div>
-                      <Slider
-                        value={[quality]}
-                        onValueChange={([v]) => setQuality(v)}
-                        min={20}
-                        max={100}
-                        step={10}
-                        className="[&_[role=slider]]:bg-[#b829dd]"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs text-[#8888a0]">Remote Control</Label>
-                      <Switch
-                        checked={enableControl}
-                        onCheckedChange={setEnableControl}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <Label className="text-xs text-[#8888a0]">Audio</Label>
-                      <Switch
-                        checked={!isMuted}
-                        onCheckedChange={(checked) => setIsMuted(!checked)}
-                      />
-                    </div>
-                  </div>
-                )}
               </div>
             </motion.div>
           </>
@@ -473,6 +550,44 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
           </div>
         )}
 
+        {hostShareRequest && !isHostSharing && (
+          <div className="mb-6 p-4 bg-[#39ff14]/10 border border-[#39ff14]/30 rounded-xl">
+            <div className="flex items-center gap-2 mb-3">
+              <Share2 className="w-5 h-5 text-[#39ff14]" />
+              <h3 className="text-sm font-semibold text-white">Share Your Screen</h3>
+            </div>
+            <p className="text-xs text-[#8888a0] mb-3">
+              A device is waiting to view your screen
+            </p>
+            <Button
+              onClick={startHostScreenShare}
+              className="w-full bg-[#39ff14] text-[#0a0a0f] hover:bg-[#39ff14]/80"
+            >
+              <Share2 className="w-4 h-4 mr-2" />
+              Start Sharing
+            </Button>
+          </div>
+        )}
+
+        {isHostSharing && (
+          <div className="mb-6 p-4 bg-[#ff6b35]/10 border border-[#ff6b35]/30 rounded-xl">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-2 h-2 rounded-full bg-[#ff6b35] animate-pulse" />
+              <h3 className="text-sm font-semibold text-white">Sharing Screen</h3>
+            </div>
+            <p className="text-xs text-[#8888a0] mb-3">
+              Your screen is being shared
+            </p>
+            <Button
+              onClick={stopHostScreenShare}
+              className="w-full bg-[#ff073a] text-white hover:bg-[#ff073a]/80"
+            >
+              <Pause className="w-4 h-4 mr-2" />
+              Stop Sharing
+            </Button>
+          </div>
+        )}
+
         {pendingRequests.length > 0 && (
           <div className="mt-auto">
             <div className="text-xs text-[#ff6b35] uppercase tracking-wider mb-2 px-2">
@@ -522,6 +637,44 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
                 Select Device
               </Button>
               <p className="hidden md:block text-[#5a5a70] text-sm">Choose a device from the sidebar</p>
+              
+              {hostShareRequest && !isHostSharing && (
+                <div className="mt-8 p-4 bg-[#39ff14]/10 border border-[#39ff14]/30 rounded-xl max-w-sm mx-auto">
+                  <div className="flex items-center justify-center gap-2 mb-3">
+                    <Share2 className="w-5 h-5 text-[#39ff14]" />
+                    <span className="text-sm font-semibold text-white">Share Request</span>
+                  </div>
+                  <p className="text-xs text-[#8888a0] mb-3">
+                    Someone wants to view your screen
+                  </p>
+                  <Button
+                    onClick={startHostScreenShare}
+                    className="w-full bg-[#39ff14] text-[#0a0a0f] hover:bg-[#39ff14]/80"
+                  >
+                    <Share2 className="w-4 h-4 mr-2" />
+                    Start Sharing
+                  </Button>
+                </div>
+              )}
+
+              {isHostSharing && (
+                <div className="mt-8 p-4 bg-[#ff6b35]/10 border border-[#ff6b35]/30 rounded-xl max-w-sm mx-auto">
+                  <div className="flex items-center justify-center gap-2 mb-3">
+                    <div className="w-2 h-2 rounded-full bg-[#ff6b35] animate-pulse" />
+                    <span className="text-sm font-semibold text-white">Sharing Screen</span>
+                  </div>
+                  <p className="text-xs text-[#8888a0] mb-3">
+                    Your screen is being shared
+                  </p>
+                  <Button
+                    onClick={stopHostScreenShare}
+                    className="w-full bg-[#ff073a] text-white hover:bg-[#ff073a]/80"
+                  >
+                    <Pause className="w-4 h-4 mr-2" />
+                    Stop Sharing
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         ) : accessStatus === 'none' ? (
@@ -596,8 +749,7 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
                   <>
                     <div className="h-4 w-px bg-[#2a2a3a] hidden md:block" />
                     <div className="hidden md:flex items-center gap-4 text-xs text-[#5a5a70]">
-                      <span>{fps} FPS</span>
-                      <span>{latency}ms</span>
+                      <span>Live</span>
                       <span>{quality}% Quality</span>
                     </div>
                   </>
@@ -640,9 +792,6 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
                     >
                       {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                     </button>
-                    <button className="hidden md:block p-2 rounded-lg hover:bg-[#1a1a24] text-[#8888a0] flex-shrink-0">
-                      <Camera className="w-4 h-4" />
-                    </button>
                   </>
                 )}
               </div>
@@ -658,70 +807,45 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
                           <RefreshCw className="w-10 h-10 text-[#b829dd] animate-spin" />
                         </div>
                         <h3 className="text-xl font-semibold text-white mb-2">Connecting...</h3>
-                        <p className="text-[#8888a0]">Establishing secure connection</p>
+                        <p className="text-[#8888a0]">Waiting for host to share screen</p>
+                        <p className="text-xs text-[#5a5a70] mt-2">
+                          The host device needs to click &quot;Start Sharing&quot;
+                        </p>
                       </>
                     ) : (
                       <>
                         <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-[#b829dd]/20 flex items-center justify-center">
-                          <Monitor className="w-10 h-10 text-[#b829dd]" />
+                          <Eye className="w-10 h-10 text-[#b829dd]" />
                         </div>
-                        <h3 className="text-xl font-semibold text-white mb-2">Ready to Stream</h3>
+                        <h3 className="text-xl font-semibold text-white mb-2">Ready to View</h3>
                         <p className="text-[#8888a0] mb-6">
                           View {selectedDevice.device_name}&apos;s screen
                         </p>
                         <Button
-                          onClick={startStreaming}
+                          onClick={startViewing}
                           className="bg-gradient-to-r from-[#b829dd] to-[#9920bb] text-white hover:from-[#a020c0] hover:to-[#8818a8]"
                         >
                           <Play className="w-4 h-4 mr-2" /> Start Viewing
                         </Button>
+                        <p className="text-xs text-[#5a5a70] mt-4">
+                          The host will need to share their screen after you click
+                        </p>
                       </>
                     )}
                   </div>
                 </div>
-            ) : (
-              <div 
-                className="absolute inset-0 flex items-center justify-center p-2 md:p-4"
-                style={{ transform: `scale(${zoom / 100})` }}
-              >
-                <div className="relative w-full max-w-5xl aspect-video bg-gradient-to-br from-[#1a1a24] to-[#12121a] rounded-lg overflow-hidden border border-[#2a2a3a]">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-full h-full bg-[#12121a] p-2 md:p-4">
-                      <div className="h-6 md:h-8 bg-[#1a1a24] rounded-t-lg flex items-center px-2 md:px-4 gap-1 md:gap-2">
-                        <div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#ff073a]" />
-                        <div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#ff6b35]" />
-                        <div className="w-2 h-2 md:w-3 md:h-3 rounded-full bg-[#39ff14]" />
-                        <span className="text-[10px] md:text-xs text-[#8888a0] ml-2 md:ml-4 truncate">Desktop - {selectedDevice.device_name}</span>
-                      </div>
-                      <div className="h-[calc(100%-1.5rem)] md:h-[calc(100%-2rem)] bg-gradient-to-br from-[#0f0f16] to-[#0a0a0f] rounded-b-lg p-3 md:p-6">
-                        <div className="grid grid-cols-4 gap-2 md:gap-4">
-                          {[...Array(8)].map((_, i) => (
-                            <div key={i} className="flex flex-col items-center gap-1 md:gap-2">
-                              <div className="w-8 h-8 md:w-12 md:h-12 rounded-lg bg-[#1a1a24] flex items-center justify-center">
-                                {i === 0 && <Monitor className="w-4 h-4 md:w-6 md:h-6 text-[#00f0ff]" />}
-                                {i === 1 && <Laptop className="w-4 h-4 md:w-6 md:h-6 text-[#39ff14]" />}
-                                {i === 2 && <Settings className="w-4 h-4 md:w-6 md:h-6 text-[#8888a0]" />}
-                                {i === 3 && <Wifi className="w-4 h-4 md:w-6 md:h-6 text-[#b829dd]" />}
-                                {i > 3 && <div className="w-4 h-4 md:w-6 md:h-6 rounded bg-[#2a2a3a]" />}
-                              </div>
-                              <span className="text-[8px] md:text-[10px] text-[#5a5a70]">
-                                {i === 0 ? 'Display' : i === 1 ? 'System' : i === 2 ? 'Settings' : i === 3 ? 'Network' : `App ${i}`}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="mt-4 md:mt-8 p-2 md:p-4 bg-[#1a1a24] rounded-lg">
-                          <div className="flex items-center gap-2 mb-2 md:mb-3">
-                            <div className="w-2 h-2 rounded-full bg-[#39ff14] animate-pulse" />
-                            <span className="text-[10px] md:text-xs text-[#8888a0]">Live Screen Feed</span>
-                          </div>
-                          <div className="h-16 md:h-32 bg-[#0a0a0f] rounded border border-[#2a2a3a] flex items-center justify-center">
-                            <p className="text-[#5a5a70] text-xs md:text-sm">Remote desktop content</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+              ) : (
+                <div 
+                  className="absolute inset-0 flex items-center justify-center p-2 md:p-4"
+                  style={{ transform: `scale(${zoom / 100})` }}
+                >
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted={isMuted}
+                    className="max-w-full max-h-full rounded-lg border border-[#2a2a3a] bg-black"
+                  />
 
                   {enableControl && (
                     <div className="absolute bottom-2 md:bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-[#0a0a0f]/80 backdrop-blur rounded-full border border-[#2a2a3a]">
@@ -731,25 +855,24 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
                     </div>
                   )}
                 </div>
-              </div>
-            )}
+              )}
 
-            {isStreaming && (
-              <div className="absolute bottom-3 right-3 md:bottom-4 md:right-4">
-                <Button
-                  onClick={stopStreaming}
-                  size="sm"
-                  className="bg-[#ff073a] text-white hover:bg-[#ff073a]/80"
-                >
-                  <Pause className="w-4 h-4 md:mr-2" /> 
-                  <span className="hidden md:inline">Stop Viewing</span>
-                </Button>
-              </div>
-            )}
-          </div>
-        </>
-      )}
+              {isStreaming && (
+                <div className="absolute bottom-3 right-3 md:bottom-4 md:right-4">
+                  <Button
+                    onClick={stopViewing}
+                    size="sm"
+                    className="bg-[#ff073a] text-white hover:bg-[#ff073a]/80"
+                  >
+                    <Pause className="w-4 h-4 md:mr-2" /> 
+                    <span className="hidden md:inline">Stop Viewing</span>
+                  </Button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
-  </div>
-)
+  )
 }

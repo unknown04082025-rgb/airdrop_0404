@@ -39,6 +39,26 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
   useEffect(() => {
     if (currentDevice) {
       fetchPendingRequests()
+
+      const channel = supabase
+        .channel(`screen-requests-for-${currentDevice.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'access_requests',
+            filter: `target_device_id=eq.${currentDevice.id}`
+          },
+          () => {
+            fetchPendingRequests()
+          }
+        )
+        .subscribe()
+
+      return () => {
+        supabase.removeChannel(channel)
+      }
     }
   }, [currentDevice])
 
@@ -51,6 +71,53 @@ export function ScreenShare({ devices, currentDevice }: ScreenShareProps) {
       return () => clearInterval(interval)
     }
   }, [isStreaming])
+
+  useEffect(() => {
+    if (!currentDevice || !selectedDevice || accessStatus !== 'pending') return
+
+    const checkRequestStatus = async () => {
+      const { data } = await supabase
+        .from('access_requests')
+        .select('*')
+        .eq('requester_device_id', currentDevice.id)
+        .eq('target_device_id', selectedDevice.id)
+        .eq('request_type', 'screen_share')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (data && data.status !== 'pending') {
+        setAccessStatus(data.status as 'approved' | 'rejected')
+      }
+    }
+
+    const pollInterval = setInterval(checkRequestStatus, 2000)
+
+    const channel = supabase
+      .channel(`screen-request-${currentDevice.id}-${selectedDevice.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'access_requests',
+          filter: `requester_device_id=eq.${currentDevice.id}`
+        },
+        (payload) => {
+          const updatedRequest = payload.new as AccessRequest
+          if (updatedRequest.target_device_id === selectedDevice.id && 
+              updatedRequest.request_type === 'screen_share') {
+            setAccessStatus(updatedRequest.status as 'approved' | 'rejected')
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      clearInterval(pollInterval)
+      supabase.removeChannel(channel)
+    }
+  }, [currentDevice, selectedDevice, accessStatus])
 
   const fetchPendingRequests = async () => {
     if (!currentDevice) return

@@ -67,6 +67,30 @@ function DashboardContent() {
   }, [user])
 
   useEffect(() => {
+    if (!device) return
+
+    const channel = supabase
+      .channel(`dashboard-requests-${device.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'access_requests',
+          filter: `target_device_id=eq.${device.id}`
+        },
+        () => {
+          fetchPendingRequests()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [device])
+
+  useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
         setNotificationOpen(false)

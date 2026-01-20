@@ -1,16 +1,16 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Shield, Folder, Monitor, LogOut, Bell, 
   ChevronRight, Circle, Laptop, Smartphone,
   HardDrive, Users, Activity, Lock, Menu, X,
-  MapPin, Globe, Info
+  MapPin, Globe, Info, Check, Clock
 } from 'lucide-react'
 import { useAuth, AuthProvider } from '@/lib/auth-context'
-import { supabase, DevicePair } from '@/lib/supabase'
+import { supabase, DevicePair, AccessRequest } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { FileAccess } from '@/components/file-access'
 import { ScreenShare } from '@/components/screen-share'
@@ -38,12 +38,18 @@ const getBrowserIcon = (browserName?: string) => {
   return '🌐'
 }
 
+type RequestWithDevice = AccessRequest & {
+  requester_device?: DevicePair
+}
+
 function DashboardContent() {
   const [activeSection, setActiveSection] = useState<Section>('overview')
   const [devices, setDevices] = useState<DevicePair[]>([])
-  const [pendingRequests, setPendingRequests] = useState(0)
+  const [pendingRequests, setPendingRequests] = useState<RequestWithDevice[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [expandedDevice, setExpandedDevice] = useState<string | null>(null)
+  const [notificationOpen, setNotificationOpen] = useState(false)
+  const notificationRef = useRef<HTMLDivElement>(null)
   const { user, device, logout, isLoading } = useAuth()
   const router = useRouter()
 
@@ -60,6 +66,16 @@ function DashboardContent() {
     }
   }, [user])
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setNotificationOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const fetchDevices = async () => {
     if (!user) return
     const { data } = await supabase
@@ -72,13 +88,44 @@ function DashboardContent() {
 
   const fetchPendingRequests = async () => {
     if (!device) return
-    const { count } = await supabase
+    const { data: requests } = await supabase
       .from('access_requests')
-      .select('*', { count: 'exact', head: true })
+      .select('*')
       .eq('target_device_id', device.id)
       .eq('status', 'pending')
+      .order('created_at', { ascending: false })
     
-    setPendingRequests(count || 0)
+    if (requests && requests.length > 0) {
+      const deviceIds = [...new Set(requests.map(r => r.requester_device_id))]
+      const { data: deviceData } = await supabase
+        .from('device_pairs')
+        .select('*')
+        .in('id', deviceIds)
+      
+      const requestsWithDevices: RequestWithDevice[] = requests.map(r => ({
+        ...r,
+        requester_device: deviceData?.find(d => d.id === r.requester_device_id)
+      }))
+      setPendingRequests(requestsWithDevices)
+    } else {
+      setPendingRequests([])
+    }
+  }
+
+  const handleApproveRequest = async (requestId: string) => {
+    await supabase
+      .from('access_requests')
+      .update({ status: 'approved' })
+      .eq('id', requestId)
+    fetchPendingRequests()
+  }
+
+  const handleDenyRequest = async (requestId: string) => {
+    await supabase
+      .from('access_requests')
+      .update({ status: 'denied' })
+      .eq('id', requestId)
+    fetchPendingRequests()
   }
 
   const handleLogout = () => {
@@ -121,14 +168,96 @@ function DashboardContent() {
           </div>
 
           <div className="flex items-center gap-2 md:gap-4">
-            <button className="relative p-2 rounded-lg hover:bg-[#1a1a24] transition-colors">
-              <Bell className="w-5 h-5 text-[#8888a0]" />
-              {pendingRequests > 0 && (
-                <span className="absolute top-1 right-1 w-4 h-4 bg-[#ff073a] rounded-full text-[10px] font-bold text-white flex items-center justify-center">
-                  {pendingRequests}
-                </span>
-              )}
-            </button>
+            <div className="relative" ref={notificationRef}>
+              <button 
+                onClick={() => setNotificationOpen(!notificationOpen)}
+                className="relative p-2 rounded-lg hover:bg-[#1a1a24] transition-colors"
+              >
+                <Bell className="w-5 h-5 text-[#8888a0]" />
+                {pendingRequests.length > 0 && (
+                  <span className="absolute top-1 right-1 w-4 h-4 bg-[#ff073a] rounded-full text-[10px] font-bold text-white flex items-center justify-center">
+                    {pendingRequests.length}
+                  </span>
+                )}
+              </button>
+
+              <AnimatePresence>
+                {notificationOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute right-0 top-full mt-2 w-80 sm:w-96 glass-panel rounded-2xl border border-[#2a2a3a] shadow-2xl overflow-hidden z-50"
+                  >
+                    <div className="p-4 border-b border-[#2a2a3a]">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-semibold text-white">Notifications</h3>
+                        {pendingRequests.length > 0 && (
+                          <span className="text-xs text-[#ff6b35] bg-[#ff6b35]/10 px-2 py-1 rounded-full">
+                            {pendingRequests.length} pending
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="max-h-80 overflow-y-auto custom-scrollbar">
+                      {pendingRequests.length === 0 ? (
+                        <div className="p-8 text-center">
+                          <Bell className="w-10 h-10 text-[#5a5a70] mx-auto mb-3" />
+                          <p className="text-[#8888a0] text-sm">No pending requests</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-[#2a2a3a]">
+                          {pendingRequests.map((request) => (
+                            <div key={request.id} className="p-4 hover:bg-[#1a1a24]/50 transition-colors">
+                              <div className="flex items-start gap-3">
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#ff6b35] to-[#ff073a] flex items-center justify-center flex-shrink-0">
+                                  {request.request_type === 'file_access' ? (
+                                    <Folder className="w-5 h-5 text-white" />
+                                  ) : (
+                                    <Monitor className="w-5 h-5 text-white" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-white font-medium">
+                                    {request.request_type === 'file_access' ? 'File Access Request' : 'Screen Share Request'}
+                                  </p>
+                                  <p className="text-xs text-[#8888a0] mt-0.5">
+                                    From: {request.requester_device?.device_name || 'Unknown Device'}
+                                  </p>
+                                  <div className="flex items-center gap-1 mt-1 text-xs text-[#5a5a70]">
+                                    <Clock className="w-3 h-3" />
+                                    <span>{new Date(request.created_at).toLocaleString()}</span>
+                                  </div>
+                                  
+                                  <div className="flex gap-2 mt-3">
+                                    <button
+                                      onClick={() => handleApproveRequest(request.id)}
+                                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#39ff14]/20 text-[#39ff14] text-xs font-medium hover:bg-[#39ff14]/30 transition-colors"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                      Approve
+                                    </button>
+                                    <button
+                                      onClick={() => handleDenyRequest(request.id)}
+                                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ff073a]/20 text-[#ff073a] text-xs font-medium hover:bg-[#ff073a]/30 transition-colors"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                      Deny
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
             <div className="h-8 w-px bg-[#2a2a3a] hidden sm:block" />
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
@@ -491,13 +620,13 @@ function DashboardContent() {
                     <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-[#ff6b35]/20 flex items-center justify-center">
                       <Bell className="w-5 h-5 md:w-6 md:h-6 text-[#ff6b35]" />
                     </div>
-                    {pendingRequests > 0 && (
+                    {pendingRequests.length > 0 && (
                       <span className="text-[10px] md:text-xs font-medium text-[#ff6b35] bg-[#ff6b35]/10 px-2 py-1 rounded-full">
-                        {pendingRequests} new
+                        {pendingRequests.length} new
                       </span>
                     )}
                   </div>
-                  <p className="text-2xl md:text-3xl font-bold text-white">{pendingRequests}</p>
+                  <p className="text-2xl md:text-3xl font-bold text-white">{pendingRequests.length}</p>
                   <p className="text-xs md:text-sm text-[#8888a0]">Pending Requests</p>
                 </div>
               </div>

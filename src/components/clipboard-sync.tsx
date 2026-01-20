@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Clipboard, Send, Copy, Trash2, Clock, 
-  Laptop, Smartphone, Circle, Check, X,
-  Link2, FileText, RefreshCw, Plus
+  Laptop, Smartphone, Circle, Check,
+  Link2, FileText, RefreshCw
 } from 'lucide-react'
 import { DevicePair, supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'

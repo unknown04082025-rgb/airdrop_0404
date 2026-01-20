@@ -1,12 +1,10 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { 
   Camera, Video, VideoOff, RefreshCw, 
   Laptop, Smartphone, Circle, Lock, Check, X,
-  Maximize2, Minimize2, RotateCcw, Download,
-  FlipHorizontal, Settings, AlertCircle
+  FlipHorizontal
 } from 'lucide-react'
 import { DevicePair, supabase, AccessRequest } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
@@ -33,9 +31,7 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
   const [waitingSession, setWaitingSession] = useState<CameraSession | null>(null)
   const [loading, setLoading] = useState(false)
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment')
-  const [isFullscreen, setIsFullscreen] = useState(false)
   
-  const videoRef = useRef<HTMLVideoElement>(null)
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -290,24 +286,6 @@ export function RemoteCamera({ devices, currentDevice }: RemoteCameraProps) {
         .eq('host_device_id', selectedDevice.id)
         .eq('viewer_device_id', currentDevice.id)
         .in('status', ['active', 'waiting'])
-    }
-  }
-
-  const toggleFullscreen = async () => {
-    try {
-      if (!document.fullscreenElement) {
-        if (containerRef.current?.requestFullscreen) {
-          await containerRef.current.requestFullscreen()
-          setIsFullscreen(true)
-        }
-      } else {
-        if (document.exitFullscreen) {
-          await document.exitFullscreen()
-          setIsFullscreen(false)
-        }
-      }
-    } catch (error) {
-      console.error('Fullscreen error:', error)
     }
   }
 

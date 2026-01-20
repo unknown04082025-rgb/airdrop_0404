@@ -10,6 +10,7 @@ import {
   CheckCircle2, XCircle, Timer, AlertCircle, Pause, Play, Database, Infinity as InfinityIcon
 } from 'lucide-react'
 import { DevicePair, supabase, AccessRequest } from '@/lib/supabase'
+import * as tus from 'tus-js-client'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { 
@@ -93,7 +94,8 @@ const formatSpeed = (bytesPerSecond: number): string => {
 }
 
 const formatTime = (seconds: number): string => {
-  if (seconds === Infinity || isNaN(seconds) || seconds <= 0) return 'Calculating...'
+  if (seconds === -1) return 'Starting...'
+  if (seconds === Infinity || isNaN(seconds) || seconds <= 0) return 'Almost done'
   if (seconds < 60) return `${Math.round(seconds)}s`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
   const hours = Math.floor(seconds / 3600)
@@ -344,21 +346,34 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
     let lastLoaded = 0
     let lastTime = startTime
     const speedSamples: number[] = []
+    let updateCounter = 0
 
     const updateProgress = (loaded: number) => {
       const now = Date.now()
+      const elapsedSinceStart = (now - startTime) / 1000
       const timeDiff = (now - lastTime) / 1000
       
-      if (timeDiff >= 0.1) {
+      updateCounter++
+      
+      if (timeDiff >= 0.05 || updateCounter <= 3) {
         const loadedDiff = loaded - lastLoaded
         const instantSpeed = timeDiff > 0 ? loadedDiff / timeDiff : 0
         
-        speedSamples.push(instantSpeed)
-        if (speedSamples.length > 10) speedSamples.shift()
+        if (instantSpeed > 0) {
+          speedSamples.push(instantSpeed)
+          if (speedSamples.length > 20) speedSamples.shift()
+        }
         
-        const avgSpeed = speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length
+        let avgSpeed = speedSamples.length > 0 
+          ? speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length 
+          : 0
+        
+        if (avgSpeed === 0 && elapsedSinceStart > 0 && loaded > 0) {
+          avgSpeed = loaded / elapsedSinceStart
+        }
+        
         const remaining = file.size - loaded
-        const timeRemaining = avgSpeed > 0 ? remaining / avgSpeed : 0
+        const timeRemaining = avgSpeed > 0 ? remaining / avgSpeed : -1
         
         lastLoaded = loaded
         lastTime = now
@@ -377,6 +392,75 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
       }
     }
 
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const CHUNK_SIZE = 6 * 1024 * 1024
+
+    if (file.size > 50 * 1024 * 1024) {
+      return new Promise<boolean>((resolve) => {
+        const projectRef = supabaseUrl?.replace('https://', '').split('.')[0]
+        
+        const upload = new tus.Upload(file, {
+          endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
+          retryDelays: [0, 3000, 5000, 10000, 20000],
+          headers: {
+            'Authorization': `Bearer ${supabaseKey}`,
+            'x-upsert': 'true'
+          },
+          uploadDataDuringCreation: true,
+          removeFingerprintOnSuccess: true,
+          metadata: {
+            bucketName: 'device-files',
+            objectName: filePath,
+            contentType: file.type || 'application/octet-stream',
+            cacheControl: '3600',
+          },
+          chunkSize: CHUNK_SIZE,
+          onError: (error) => {
+            console.error('TUS upload error:', error)
+            setUploadingFiles(prev => prev.map(f => 
+              f.id === uploadFile.id 
+                ? { ...f, status: 'failed' as const }
+                : f
+            ))
+            resolve(false)
+          },
+          onProgress: (bytesUploaded, bytesTotal) => {
+            updateProgress(bytesUploaded)
+          },
+          onSuccess: () => {
+            setUploadingFiles(prev => prev.map(f => 
+              f.id === uploadFile.id 
+                ? { ...f, status: 'completed' as const, progress: 100, uploadedSize: file.size, speed: 0, timeRemaining: 0 }
+                : f
+            ))
+            resolve(true)
+          }
+        })
+
+        const abortController = new AbortController()
+        abortController.signal.addEventListener('abort', () => {
+          upload.abort()
+          setUploadingFiles(prev => prev.map(f => 
+            f.id === uploadFile.id 
+              ? { ...f, status: 'paused' as const }
+              : f
+          ))
+        })
+        
+        setUploadingFiles(prev => prev.map(f => 
+          f.id === uploadFile.id ? { ...f, abortController } : f
+        ))
+
+        upload.findPreviousUploads().then(previousUploads => {
+          if (previousUploads.length) {
+            upload.resumeFromPreviousUpload(previousUploads[0])
+          }
+          upload.start()
+        })
+      })
+    }
+
     try {
       const xhr = new XMLHttpRequest()
       const abortController = new AbortController()
@@ -386,21 +470,32 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
       ))
 
       return new Promise<boolean>((resolve) => {
+        xhr.timeout = 0
+        
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) {
             updateProgress(event.loaded)
           }
+        }
+        
+        xhr.upload.onloadstart = () => {
+          setUploadingFiles(prev => prev.map(f => 
+            f.id === uploadFile.id 
+              ? { ...f, progress: 0, uploadedSize: 0, speed: 0, timeRemaining: -1 }
+              : f
+          ))
         }
 
         xhr.onload = async () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             setUploadingFiles(prev => prev.map(f => 
               f.id === uploadFile.id 
-                ? { ...f, status: 'completed' as const, progress: 100, uploadedSize: file.size }
+                ? { ...f, status: 'completed' as const, progress: 100, uploadedSize: file.size, speed: 0, timeRemaining: 0 }
                 : f
             ))
             resolve(true)
           } else {
+            console.error('Upload failed with status:', xhr.status, xhr.responseText)
             setUploadingFiles(prev => prev.map(f => 
               f.id === uploadFile.id 
                 ? { ...f, status: 'failed' as const }
@@ -411,6 +506,17 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
         }
 
         xhr.onerror = () => {
+          console.error('Upload XHR error')
+          setUploadingFiles(prev => prev.map(f => 
+            f.id === uploadFile.id 
+              ? { ...f, status: 'failed' as const }
+              : f
+          ))
+          resolve(false)
+        }
+
+        xhr.ontimeout = () => {
+          console.error('Upload timeout')
           setUploadingFiles(prev => prev.map(f => 
             f.id === uploadFile.id 
               ? { ...f, status: 'failed' as const }
@@ -427,9 +533,6 @@ export function FileAccess({ devices, currentDevice }: FileAccessProps) {
           ))
           resolve(false)
         }
-
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-        const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
         
         xhr.open('POST', `${supabaseUrl}/storage/v1/object/device-files/${filePath}`)
         xhr.setRequestHeader('Authorization', `Bearer ${supabaseKey}`)
